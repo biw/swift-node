@@ -1,0 +1,26 @@
+{
+  "name": "swift-node-monorepo",
+  "private": true,
+  "description": "Node-API bridge for Swift. Write native Node addons in Swift without C++ glue.",
+  "scripts": {
+    "build:core": "pnpm --filter swift-node build && pnpm --filter swift-node-unplugin build",
+    "build:example:hello-world": "pnpm --dir examples/hello-world build",
+    "build:example:hello-world-tsdown": "pnpm --dir examples/hello-world-tsdown build",
+    "build:example:secure-storage": "pnpm --dir examples/secure-storage build && pnpm --dir examples/secure-storage-consumer-esm build",
+    "run:example:secure-storage-consumer-esm": "pnpm --dir examples/secure-storage-consumer-esm start",
+    "build:example:timer-callback": "pnpm --dir examples/timer-callback build",
+    "build:examples": "pnpm build:example:hello-world && pnpm build:example:hello-world-tsdown && pnpm build:example:secure-storage && pnpm build:example:timer-callback"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.20.0",
+      "onFail": "download"
+    }
+  }
+}

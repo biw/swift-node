@@ -1,0 +1,251 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Format, lint, and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@07d0b0e993009eb3b908ea06e49e88e933b728a2 # v1.17.0
+        with:
+          node-version: '24'
+          cache: true
+
+      - run: vp install
+      - run: vp check
+
+  unit-tests:
+    name: Unit Tests - ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: Linux
+          - runner: macos-latest
+            platform: macOS
+          - runner: windows-latest
+            platform: Windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@07d0b0e993009eb3b908ea06e49e88e933b728a2 # v1.17.0
+        with:
+          node-version: '24'
+          cache: true
+
+      - name: Install Swift toolchain
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@v0.4.0
+        with:
+          swift-version: swift-6.3.3-release
+          swift-build: 6.3.3-RELEASE
+
+      - run: vp install
+      - run: vp -C packages/swift-node pack
+      - run: vp -C packages/swift-node test
+      - run: vp -C packages/swift-node-unplugin pack
+      - run: vp -C packages/swift-node-unplugin test
+
+  example-hello-world:
+    name: Example - Hello World - ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: Linux
+          - runner: macos-latest
+            platform: macOS
+          - runner: windows-latest
+            platform: Windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@07d0b0e993009eb3b908ea06e49e88e933b728a2 # v1.17.0
+        with:
+          node-version: '24'
+          cache: true
+
+      - name: Install Swift toolchain
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@v0.4.0
+        with:
+          swift-version: swift-6.3.3-release
+          swift-build: 6.3.3-RELEASE
+
+      - name: Verify toolchain
+        run: |
+          swiftc --version
+          clang++ --version
+
+      - run: vp install
+
+      - name: Build SDK
+        run: |
+          vp -C packages/swift-node pack
+          vp -C packages/swift-node-unplugin pack
+
+      - name: Build example
+        run: vp -C examples/hello-world run build
+
+      - name: Test native addon and ESM/CJS consumers
+        run: |
+          vp -C examples/hello-world test
+          vp -C examples/hello-world-consumer-esm test
+          vp -C examples/hello-world-consumer-cjs test
+          vp -C examples/hello-world-tsdown run build
+          vp -C examples/hello-world-tsdown test
+          vp -C examples/hello-world-tsdown-consumer-esm test
+          vp -C examples/hello-world-tsdown-consumer-cjs test
+
+      - name: Test packaged install
+        run: vp test test/packaged-hello-world.test.mjs
+
+  example-secure-storage:
+    # This demo uses Apple's Security/Keychain framework and has no Linux backend.
+    name: Example - Secure Storage - macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@07d0b0e993009eb3b908ea06e49e88e933b728a2 # v1.17.0
+        with:
+          node-version: '24'
+          cache: true
+
+      - name: Install Swift toolchain
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@v0.4.0
+        with:
+          swift-version: swift-6.3.3-release
+          swift-build: 6.3.3-RELEASE
+
+      - name: Verify toolchain
+        run: |
+          swiftc --version
+          clang++ --version
+
+      - run: vp install
+
+      - name: Build SDK
+        run: vp -C packages/swift-node pack
+
+      - name: Build examples
+        run: |
+          vp -C examples/secure-storage run build
+          vp -C examples/secure-storage-consumer-esm run build
+
+      - name: Test native addon and ESM/CJS consumers
+        run: |
+          vp -C examples/secure-storage test
+          vp -C examples/secure-storage-consumer-esm test
+          vp -C examples/secure-storage-consumer-cjs test
+
+      - name: Run ESM consumer demo
+        run: vp -C examples/secure-storage-consumer-esm run start
+
+  example-timer-callback:
+    name: Example - Timer Callback - ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: Linux
+          - runner: macos-latest
+            platform: macOS
+          - runner: windows-latest
+            platform: Windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@07d0b0e993009eb3b908ea06e49e88e933b728a2 # v1.17.0
+        with:
+          node-version: '24'
+          cache: true
+
+      - name: Install Swift toolchain
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@v0.4.0
+        with:
+          swift-version: swift-6.3.3-release
+          swift-build: 6.3.3-RELEASE
+
+      - name: Verify toolchain
+        run: |
+          swiftc --version
+          clang++ --version
+
+      - run: vp install
+
+      - name: Build SDK
+        run: vp -C packages/swift-node pack
+
+      - name: Build example
+        run: vp -C examples/timer-callback run build
+
+      - name: Test native addon and ESM/CJS consumers
+        run: |
+          vp -C examples/timer-callback test
+          vp -C examples/timer-callback-consumer-esm test
+          vp -C examples/timer-callback-consumer-cjs test
+
+  integration-tests:
+    name: Additional Integrations - ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: Linux
+          - runner: macos-latest
+            platform: macOS
+          - runner: windows-latest
+            platform: Windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@07d0b0e993009eb3b908ea06e49e88e933b728a2 # v1.17.0
+        with:
+          node-version: '24'
+          cache: true
+
+      - name: Install Swift toolchain
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@v0.4.0
+        with:
+          swift-version: swift-6.3.3-release
+          swift-build: 6.3.3-RELEASE
+
+      - name: Verify toolchain
+        run: |
+          swiftc --version
+          clang++ --version
+
+      - run: vp install
+
+      # Example coverage is owned by the three dedicated jobs above. Keep the
+      # remaining, non-example integration checks here to avoid duplicate runs.
+      - name: Test `init <package-name>` and `init .` quick starts
+        run: vp test test/quickstart.test.mjs
+
+      - name: Test oversized string handling
+        run: vp test test/oversized-string.test.mjs
+
+      - name: Test production bridge
+        run: vp test test/production-bridge.test.mjs
+
+      - name: Test packaged production bridge
+        run: vp test test/packaged-production-bridge.test.mjs

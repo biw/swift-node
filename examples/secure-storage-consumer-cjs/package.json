@@ -1,0 +1,15 @@
+{
+  "name": "@swift-node-examples/secure-storage-consumer-cjs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "vp test run test.mjs"
+  },
+  "devDependencies": {
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "dependencies": {
+    "@swift-node-examples/secure-storage": "workspace:*"
+  }
+}

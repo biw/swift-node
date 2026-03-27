@@ -1,0 +1,36 @@
+{
+  "name": "@swift-node-examples/secure-storage",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist_swift-node/index.cjs",
+  "types": "./dist_swift-node/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist_swift-node/index.d.mts",
+        "default": "./dist_swift-node/index.mjs"
+      },
+      "require": {
+        "types": "./dist_swift-node/index.d.cts",
+        "default": "./dist_swift-node/index.cjs"
+      }
+    }
+  },
+  "description": "macOS Keychain CRUD — ported from a real production Electron addon.",
+  "files": [
+    "dist_swift-node/",
+    "src/"
+  ],
+  "scripts": {
+    "build": "swift-node build",
+    "test": "vp test run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "swift-node": "workspace:*",
+    "typescript": "^5.0.0",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
