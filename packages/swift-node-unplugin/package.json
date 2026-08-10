@@ -102,7 +102,7 @@
     "test": "vp test run"
   },
   "peerDependencies": {
-    "swift-node": "^0.0.3"
+    "swift-node": ">=0.0.3 <0.1.0"
   },
   "dependencies": {
     "unplugin": "3.3.0"
