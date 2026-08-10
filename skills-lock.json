@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "better-logging": {
+      "source": "biw/skills",
+      "sourceType": "github",
+      "skillPath": "skills/better-logging/SKILL.md",
+      "computedHash": "ed9108ee92982cc0bc6a232d43e350c48b65556e6b79805d96d18b02fcdc7690"
+    },
+    "conductor-setup": {
+      "source": "biw/skills",
+      "sourceType": "github",
+      "skillPath": "skills/conductor-setup/SKILL.md",
+      "computedHash": "722fa45163cba78ebcf7af0d6ded4dc92848073098db16c1b65702a6f420f3ea"
+    },
+    "create-readme": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/create-readme/SKILL.md",
+      "computedHash": "d0ece1b2164ce1376e4ab6e98d6ac079df3a2a94f5f02224362b6a1ce2516ae9"
+    },
+    "review-fix-address-bots": {
+      "source": "biw/skills",
+      "sourceType": "github",
+      "skillPath": "skills/review-fix-address-bots/SKILL.md",
+      "computedHash": "57ce080372a87fdf03b514098dd55be0319996a0a6fa2d368bb00f40ad59886a"
+    }
+  }
+}

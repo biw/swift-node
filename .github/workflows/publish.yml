@@ -1,0 +1,220 @@
+name: Publish to npm
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      swift_node_should_publish: ${{ steps.check.outputs.swift_node_should_publish }}
+      swift_node_unplugin_should_publish: ${{ steps.check.outputs.swift_node_unplugin_should_publish }}
+
+    steps:
+      - name: Checkout the CI-tested revision
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Verify the tested revision is still main
+        id: revision
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$TESTED_SHA" ]; then
+            echo "Checked out revision does not match the successful CI run" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main
+
+          if [ "$(git rev-parse origin/main)" != "$TESTED_SHA" ]; then
+            echo "is_current=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale successful CI revision $TESTED_SHA"
+            exit 0
+          fi
+
+          echo "is_current=true" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        if: steps.revision.outputs.is_current == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Check if version should be published
+        if: steps.revision.outputs.is_current == 'true'
+        id: check
+        run: |
+          npm_registry() {
+            (cd "$RUNNER_TEMP" && npm "$@")
+          }
+
+          npm_registry ping --registry=https://registry.npmjs.org
+
+          SWIFT_NODE_VERSION=$(node -p "require('./packages/swift-node/package.json').version")
+          SWIFT_NODE_UNPLUGIN_VERSION=$(node -p "require('./packages/swift-node-unplugin/package.json').version")
+
+          if [ "$SWIFT_NODE_VERSION" != "$SWIFT_NODE_UNPLUGIN_VERSION" ]; then
+            echo "swift-node and swift-node-unplugin must use the same release version" >&2
+            exit 1
+          fi
+
+          echo "version=$SWIFT_NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+          check_package() {
+            PACKAGE_DIRECTORY="$1"
+            OUTPUT_NAME="$2"
+            PACKAGE_NAME=$(node -p "require('./$PACKAGE_DIRECTORY/package.json').name")
+            PACKAGE_VERSION=$(node -p "require('./$PACKAGE_DIRECTORY/package.json').version")
+            echo "Current package: $PACKAGE_NAME@$PACKAGE_VERSION"
+
+            if npm_registry view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+              echo "$OUTPUT_NAME=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "$OUTPUT_NAME=true" >> "$GITHUB_OUTPUT"
+              return 1
+            fi
+          }
+
+          SHOULD_PUBLISH=false
+          check_package packages/swift-node swift_node_should_publish || SHOULD_PUBLISH=true
+          check_package packages/swift-node-unplugin swift_node_unplugin_should_publish || SHOULD_PUBLISH=true
+          echo "should_publish=$SHOULD_PUBLISH" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: check-version
+    if: needs.check-version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout the CI-tested revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: '11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        run: |
+          pnpm exec vp -C packages/swift-node pack
+          pnpm exec vp -C packages/swift-node-unplugin pack
+
+      - name: Verify npm supports trusted publishing
+        run: |
+          NPM_VERSION=$(npm --version)
+          echo "npm version: $NPM_VERSION"
+
+          node -e "
+            const version = process.argv[1].split('.').map(Number)
+            const minimum = [11, 5, 1]
+
+            for (let i = 0; i < minimum.length; i++) {
+              if (version[i] > minimum[i]) process.exit(0)
+              if (version[i] < minimum[i]) process.exit(1)
+            }
+          " "$NPM_VERSION"
+
+      - name: Reconfirm the published revision
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch --no-tags origin main
+
+          if [ "$(git rev-parse HEAD)" != "$TESTED_SHA" ] || [ "$(git rev-parse origin/main)" != "$TESTED_SHA" ]; then
+            echo "Refusing to publish a revision that is no longer the tip of main" >&2
+            exit 1
+          fi
+
+      # A rerun of this job retains the completed check-version job's outputs.
+      # Recheck here so a package published by an earlier attempt is skipped
+      # while any remaining package can still publish and create the release.
+      - name: Recheck package versions immediately before publishing
+        id: publish-check
+        run: |
+          npm_registry() {
+            (cd "$RUNNER_TEMP" && npm "$@")
+          }
+
+          check_package() {
+            PACKAGE_DIRECTORY="$1"
+            OUTPUT_NAME="$2"
+            PACKAGE_NAME=$(node -p "require('./$PACKAGE_DIRECTORY/package.json').name")
+            PACKAGE_VERSION=$(node -p "require('./$PACKAGE_DIRECTORY/package.json').version")
+
+            if npm_registry view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+              echo "Skipping $PACKAGE_NAME@$PACKAGE_VERSION; it is already published"
+              echo "$OUTPUT_NAME=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "$OUTPUT_NAME=true" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          check_package packages/swift-node swift_node_should_publish
+          check_package packages/swift-node-unplugin swift_node_unplugin_should_publish
+
+      - name: Publish swift-node to npm
+        if: steps.publish-check.outputs.swift_node_should_publish == 'true'
+        working-directory: packages/swift-node
+        run: npm publish
+
+      - name: Publish swift-node-unplugin to npm
+        if: steps.publish-check.outputs.swift_node_unplugin_should_publish == 'true'
+        working-directory: packages/swift-node-unplugin
+        run: npm publish
+
+  release:
+    needs:
+      - check-version
+      - publish
+    if: >-
+      needs.check-version.result == 'success' &&
+      needs.check-version.outputs.should_publish == 'true' &&
+      needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: v${{ needs.check-version.outputs.version }}
+          target_commitish: ${{ github.event.workflow_run.head_sha }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true

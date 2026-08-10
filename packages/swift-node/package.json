@@ -1,0 +1,53 @@
+{
+  "name": "swift-node",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Node-API bridge for Swift. Write Node native addons in Swift without C++ glue.",
+  "bin": {
+    "swift-node": "bin/swift-node.js"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "test": "vp test run"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "runtime",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/biw/swift-node.git",
+    "directory": "packages/swift-node"
+  },
+  "homepage": "https://github.com/biw/swift-node#readme",
+  "bugs": {
+    "url": "https://github.com/biw/swift-node/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "swift",
+    "node",
+    "native",
+    "addon",
+    "electron",
+    "napi"
+  ],
+  "author": "Ben Williams",
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/prompts": "^8.5.2",
+    "node-gyp": "^13.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@swift-node-examples/timer-callback",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./dist_swift-node/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist_swift-node/index.d.mts",
+        "default": "./dist_swift-node/index.mjs"
+      },
+      "require": {
+        "types": "./dist_swift-node/index.d.cts",
+        "default": "./dist_swift-node/index.cjs"
+      }
+    }
+  },
+  "main": "./dist_swift-node/index.cjs",
+  "files": [
+    "dist_swift-node/",
+    "src/"
+  ],
+  "scripts": {
+    "build": "swift-node build",
+    "test": "vp test run"
+  },
+  "devDependencies": {
+    "swift-node": "workspace:*",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist_swift-node/
+.context/
+
+# Local smoke-test and package-manager artifacts
+package-lock.json
+.pnpm-store/
+*.tgz
+npm-debug.log*

@@ -1,0 +1,16 @@
+{
+  "name": "@swift-node-examples/hello-world-consumer-esm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vp test run test.js"
+  },
+  "devDependencies": {
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "dependencies": {
+    "@swift-node-examples/hello-world": "workspace:*"
+  }
+}
