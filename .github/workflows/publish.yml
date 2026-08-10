@@ -63,7 +63,11 @@ jobs:
         if: steps.revision.outputs.is_current == 'true'
         id: check
         run: |
-          npm ping --registry=https://registry.npmjs.org
+          npm_registry() {
+            (cd "$RUNNER_TEMP" && npm "$@")
+          }
+
+          npm_registry ping --registry=https://registry.npmjs.org
 
           SWIFT_NODE_VERSION=$(node -p "require('./packages/swift-node/package.json').version")
           SWIFT_NODE_UNPLUGIN_VERSION=$(node -p "require('./packages/swift-node-unplugin/package.json').version")
@@ -82,7 +86,7 @@ jobs:
             PACKAGE_VERSION=$(node -p "require('./$PACKAGE_DIRECTORY/package.json').version")
             echo "Current package: $PACKAGE_NAME@$PACKAGE_VERSION"
 
-            if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            if npm_registry view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
               echo "$OUTPUT_NAME=false" >> "$GITHUB_OUTPUT"
             else
               echo "$OUTPUT_NAME=true" >> "$GITHUB_OUTPUT"
