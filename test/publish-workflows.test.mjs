@@ -19,6 +19,7 @@ describe('independent package publishing workflows', () => {
     expect(publisher).toContain('should_publish')
     expect(publisher).toContain('should_release')
     expect(publisher).toContain('npm_registry view')
+    expect(publisher).toContain('was published by a concurrent run')
     expect(publisher).not.toContain('swift-node-unplugin')
     expect(publisher).not.toContain('swift_node_should_publish')
   })
