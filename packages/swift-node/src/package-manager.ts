@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 
 export const packageManagerNames = ['npm', 'pnpm', 'bun'] as const
 
@@ -7,6 +9,33 @@ export type PackageManagerName = (typeof packageManagerNames)[number] | 'yarn'
 export type PackageManager =
   | { name: Exclude<PackageManagerName, 'yarn'>; source: 'installed'; version: string }
   | { name: 'yarn'; source: 'corepack'; version: string }
+
+const packageManagerLockfiles: Array<[PackageManagerName, string]> = [
+  ['pnpm', 'pnpm-lock.yaml'],
+  ['yarn', 'yarn.lock'],
+  ['bun', 'bun.lock'],
+  ['bun', 'bun.lockb'],
+  ['npm', 'package-lock.json'],
+  ['npm', 'npm-shrinkwrap.json'],
+]
+
+/** Infer a project's package manager without requiring it to be installed globally. */
+export function inferProjectPackageManager(projectDir: string): PackageManagerName | undefined {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(projectDir, 'package.json'), 'utf8'))
+    const declaredManager =
+      typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@', 1)[0] : undefined
+    if (declaredManager && ['npm', 'pnpm', 'bun', 'yarn'].includes(declaredManager)) {
+      return declaredManager as PackageManagerName
+    }
+  } catch {
+    // An absent or malformed manifest cannot provide a package-manager declaration.
+  }
+
+  return packageManagerLockfiles.find(([, lockfile]) =>
+    existsSync(path.join(projectDir, lockfile)),
+  )?.[0]
+}
 
 function commandVersion(command: string, args: string[]): string | undefined {
   const result = spawnSync(command, args, {

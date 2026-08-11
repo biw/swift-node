@@ -42,9 +42,11 @@ import { validateExports } from './validator.js'
 import {
   configureYarn,
   findAvailablePackageManagers,
+  inferProjectPackageManager,
   PackageManager,
   PackageManagerName,
 } from './package-manager.js'
+import { gitignoreTemplate } from './gitignore.js'
 import { executableForPlatform, executionOptionsForPlatform } from './command.js'
 import {
   generatePrebuildCiWorkflow,
@@ -57,8 +59,6 @@ import {
   type PrebuildTarget,
 } from './prebuild.js'
 
-const args = process.argv.slice(2)
-const command = args[0]
 const generatedDirName = 'dist_swift-node'
 
 function packageVersion(): string {
@@ -70,9 +70,8 @@ function packageVersion(): string {
   }
 }
 
-void run()
-
-async function run() {
+export async function run(args = process.argv.slice(2)) {
+  const command = args[0]
   try {
     switch (command) {
       case 'init':
@@ -103,6 +102,10 @@ async function run() {
     console.error(`Error: ${message}`)
     process.exitCode = 1
   }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  void run()
 }
 
 function packageNameValidationError(packageName: string): string | undefined {
@@ -235,14 +238,26 @@ async function promptToPublishPrebuildPackage(): Promise<boolean> {
   })
 }
 
-async function cmdInit(initArgs: string[]) {
+export interface InitOptions {
+  buildNow?: boolean
+  createPrebuildWorkflow?: boolean
+  cwd?: string
+  interactive?: boolean
+  packageManager?: PackageManager
+  prebuildTargets?: PrebuildTarget[]
+  publishPrebuildPackage?: boolean
+  shipSwiftRuntime?: boolean
+  useTsdown?: boolean
+}
+
+export async function cmdInit(initArgs: string[], options: InitOptions = {}) {
   if (initArgs.length > 1) {
     throw new Error('Usage: swift-node init [package-name|.]')
   }
 
-  const cwd = process.cwd()
+  const cwd = options.cwd ?? process.cwd()
   const requestedPackageName = initArgs[0]
-  const interactive = canPrompt()
+  const interactive = options.interactive ?? canPrompt()
 
   let projectDir = cwd
   let packageName: string
@@ -275,23 +290,33 @@ async function cmdInit(initArgs: string[]) {
   }
 
   const createsPackageManifest = !existsSync(path.join(projectDir, 'package.json'))
+  const existingProjectPackageManager = createsPackageManifest
+    ? undefined
+    : inferProjectPackageManager(projectDir)
   const availablePackageManagers =
     interactive && createsPackageManifest ? findAvailablePackageManagers() : []
   const packageManager =
-    availablePackageManagers.length > 0
+    options.packageManager ??
+    (availablePackageManagers.length > 0
       ? await promptForPackageManager(availablePackageManagers)
-      : undefined
-  const useTsdown = interactive && createsPackageManifest ? await promptToUseTsdown() : false
+      : undefined)
+  const useTsdown =
+    options.useTsdown ?? (interactive && createsPackageManifest ? await promptToUseTsdown() : false)
   const prebuildTargets =
-    interactive && createsPackageManifest ? await promptForPrebuildTargets() : []
-  const shipSwiftRuntime = prebuildTargets.length > 0 ? await promptToShipSwiftRuntime() : true
+    options.prebuildTargets ??
+    (interactive && createsPackageManifest ? await promptForPrebuildTargets() : [])
+  const shipSwiftRuntime =
+    options.shipSwiftRuntime ??
+    (prebuildTargets.length > 0 ? await promptToShipSwiftRuntime() : true)
   const createPrebuildWorkflow =
-    prebuildTargets.length > 0 ? await promptToCreatePrebuildWorkflow() : false
-  const publishPrebuildPackage = createPrebuildWorkflow
-    ? await promptToPublishPrebuildPackage()
-    : false
+    options.createPrebuildWorkflow ??
+    (prebuildTargets.length > 0 ? await promptToCreatePrebuildWorkflow() : false)
+  const publishPrebuildPackage =
+    options.publishPrebuildPackage ??
+    (createPrebuildWorkflow ? await promptToPublishPrebuildPackage() : false)
   const buildNow =
-    interactive && createsPackageManifest && packageManager ? await promptToBuild() : false
+    options.buildNow ??
+    (interactive && createsPackageManifest && packageManager ? await promptToBuild() : false)
 
   // Create directories
   mkdirSync(path.join(projectDir, 'src'), { recursive: true })
@@ -332,6 +357,7 @@ async function cmdInit(initArgs: string[]) {
             'swift-node': `^${version}`,
             'swift-node-unplugin': `^${version}`,
             tsdown: '0.22.14',
+            typescript: '^6.0.2',
           },
           files: packageFilesForPrebuildTargets(prebuildTargets, {
             bundleWithTsdown: true,
@@ -461,15 +487,23 @@ export default defineConfig({
 
   // Ignore generated local output.
   const gitignorePath = path.join(projectDir, '.gitignore')
-  const gitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf-8') : ''
+  const hasGitignore = existsSync(gitignorePath)
+  const gitignore = hasGitignore ? readFileSync(gitignorePath, 'utf-8') : ''
   const gitignoreLines = new Set(gitignore.split(/\r?\n/))
-  const missingIgnores = ['dist_swift-node/', ...(useTsdown ? ['dist/'] : [])].filter(
-    (entry) => !gitignoreLines.has(entry),
+  const template = gitignoreTemplate(
+    packageManager?.name ?? existingProjectPackageManager,
+    useTsdown,
   )
+  const missingIgnores = template.entries.filter((entry) => !gitignoreLines.has(entry))
   if (missingIgnores.length > 0) {
-    const prefix = gitignore.length === 0 || gitignore.endsWith('\n') ? '' : '\n'
-    writeFileSync(gitignorePath, gitignore + prefix + missingIgnores.join('\n') + '\n')
-    console.log('Updated .gitignore')
+    if (hasGitignore) {
+      const prefix = gitignore.endsWith('\n') ? '' : '\n'
+      writeFileSync(gitignorePath, gitignore + prefix + missingIgnores.join('\n') + '\n')
+      console.log('Updated .gitignore')
+    } else {
+      writeFileSync(gitignorePath, template.content)
+      console.log('Created .gitignore')
+    }
   }
 
   if (buildNow) {
