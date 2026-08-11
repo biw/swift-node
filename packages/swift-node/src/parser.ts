@@ -296,9 +296,23 @@ export interface SwiftCodableType {
   line: number
 }
 
+/** Extract source-declared global actor names so callers can combine every Swift file. */
+export function parseSwiftGlobalActorNames(source: string): Set<string> {
+  const names = new Set<string>()
+  const pattern =
+    /@globalActor\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:public|internal|private|fileprivate|final|open)\s+)*(?:actor|struct|class|enum)\s+(\w+)/g
+  for (const match of source.matchAll(pattern)) {
+    names.add(match[1])
+  }
+  return names
+}
+
 // Parse // @swift-node:export annotated functions from Swift source.
 // Skips attributes (@available, @MainActor, etc.) between annotation and func.
-export function parseExportedFunctions(source: string): ExportedFunction[] {
+export function parseExportedFunctions(
+  source: string,
+  globalActorNames = parseSwiftGlobalActorNames(source),
+): ExportedFunction[] {
   const functions: ExportedFunction[] = []
   const lines = source.split('\n')
 
@@ -348,9 +362,25 @@ export function parseExportedFunctions(source: string): ExportedFunction[] {
     const isStream = annotations.some((candidate) =>
       /^\s*\/\/\s*@swift-node:stream\s*$/.test(candidate),
     )
+    const hasBorrowedInput = params.some(
+      (parameter) => classifyNativeSwiftType(parameter.type) === 'borrowed-buffer',
+    )
     const actorIsolation = annotations
-      .map((candidate) => candidate.trim().match(/^@(\w*Actor)$/)?.[1])
-      .find(Boolean)
+      .map((candidate) => candidate.trim().match(/^@((?:\w+\.)*\w+)$/)?.[1])
+      .find((candidate) => {
+        const shortName = candidate?.split('.').at(-1)
+        return (
+          candidate === 'MainActor' ||
+          candidate?.endsWith('Actor') ||
+          globalActorNames.has(candidate ?? '') ||
+          globalActorNames.has(shortName ?? '') ||
+          // An imported global actor may not use the conventional `Actor`
+          // suffix. Only fail closed for borrowed inputs: treating every
+          // type-like attribute as actor isolation would change ordinary
+          // exports that use attached macros or other attributes.
+          (hasBorrowedInput && shortName !== undefined && /^[A-Z]/.test(shortName))
+        )
+      })
 
     functions.push({
       name,

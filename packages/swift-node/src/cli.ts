@@ -20,6 +20,7 @@ import { readConfig } from './config.js'
 import {
   parseSwiftStructs,
   parseExportedFunctions,
+  parseSwiftGlobalActorNames,
   parseSwiftCodableTypes,
   SwiftFunction,
   SwiftStruct,
@@ -521,25 +522,26 @@ function cmdBuild(cwd = process.cwd()) {
     const source = readFileSync(fullPath, 'utf-8')
     allSources.set(src, source)
     const structs = parseSwiftStructs(source)
-    const exported = parseExportedFunctions(source)
     const codableTypes = parseSwiftCodableTypes(source)
     allStructs.push(...structs)
-    allExported.push(...exported)
     allCodableTypes.push(...codableTypes)
+  }
+
+  const globalActorNames = new Set<string>()
+  for (const source of allSources.values()) {
+    for (const name of parseSwiftGlobalActorNames(source)) globalActorNames.add(name)
+  }
+  for (const source of allSources.values()) {
+    allExported.push(...parseExportedFunctions(source, globalActorNames))
   }
 
   // Validate export annotations
   if (allExported.length > 0) {
     let hasErrors = false
     for (const [src, source] of allSources) {
-      const exported = parseExportedFunctions(source)
+      const exported = parseExportedFunctions(source, globalActorNames)
       if (exported.length === 0) continue
-      const errors = validateExports(
-        exported,
-        source,
-        allStructs.map((struct) => struct.name),
-        allCodableTypes,
-      )
+      const errors = validateExports(exported, source, allStructs, allCodableTypes)
       for (const err of errors) {
         console.error(
           `${err.severity === 'error' ? 'Error' : 'Warning'}: ${src}:${err.line}: ${err.message}`,

@@ -126,6 +126,13 @@ static inline bool swift_node_json_parse(napi_env env, const char* json_text, na
 }
 
 static inline bool swift_node_is_buffer_or_typedarray(napi_env env, napi_value value, const char* message) {
+    bool is_dataview = false;
+    if (!swift_node_napi_ok(env, napi_is_dataview(env, value, &is_dataview), message)) return false;
+    if (is_dataview) {
+        napi_throw_type_error(env, nullptr, message);
+        return false;
+    }
+
     napi_typedarray_type type;
     size_t length;
     void* data;
@@ -149,6 +156,13 @@ static inline bool swift_node_is_buffer_or_typedarray(napi_env env, napi_value v
 }
 
 static inline bool swift_node_get_binary_data(napi_env env, napi_value value, void** data, size_t* length) {
+    bool is_dataview = false;
+    if (!swift_node_napi_ok(env, napi_is_dataview(env, value, &is_dataview), "Failed to inspect binary argument")) return false;
+    if (is_dataview) {
+        napi_throw_type_error(env, nullptr, "Expected a Uint8Array or Buffer");
+        return false;
+    }
+
     napi_typedarray_type type;
     napi_value arraybuffer;
     size_t byte_offset;

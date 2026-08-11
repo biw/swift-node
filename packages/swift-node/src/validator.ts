@@ -7,6 +7,7 @@
 import {
   ExportedFunction,
   SwiftCodableType,
+  SwiftStruct,
   bridgeTransportForType,
   classifyNativeSwiftType,
   isEscapingCallback,
@@ -25,20 +26,44 @@ export interface ValidationError {
 export function validateExports(
   exported: ExportedFunction[],
   source: string,
-  knownStructNames: string[] = [],
+  knownStructs: Array<string | SwiftStruct> = [],
   knownCodableTypes: Array<string | SwiftCodableType> = [],
 ): ValidationError[] {
   const errors: ValidationError[] = []
+  const knownStructNames = new Set(
+    knownStructs.map((struct) => (typeof struct === 'string' ? struct : struct.name)),
+  )
+  const stringStructNames = new Set(
+    knownStructs
+      .filter((struct): struct is SwiftStruct => typeof struct !== 'string')
+      .filter((struct) => struct.fields.some((field) => field.category === 'string'))
+      .map((struct) => struct.name),
+  )
   const knownCodableNames = new Set(
     knownCodableTypes.map((type) => (typeof type === 'string' ? type : type.name)),
   )
-  errors.push(...validateUnsupportedTypes(exported, new Set(knownStructNames), knownCodableNames))
+  errors.push(...validateUnsupportedTypes(exported, knownStructNames, knownCodableNames))
   errors.push(...validateOverloads(exported))
   errors.push(...validateAccessControl(exported, source))
-  errors.push(...validateAsyncRestrictions(exported, new Set(knownStructNames), knownCodableNames))
+  errors.push(...validateAsyncRestrictions(exported, knownStructNames, knownCodableNames))
   errors.push(...validateCallbackSignatures(exported))
   errors.push(...validateStreams(exported, knownCodableNames))
-  errors.push(...validateBorrowedBufferRestrictions(exported, knownCodableNames))
+  errors.push(
+    ...validateBorrowedBufferRestrictions(
+      exported,
+      knownStructNames,
+      stringStructNames,
+      knownCodableNames,
+    ),
+  )
+  errors.push(
+    ...validateSynchronousBridgeIdentifiers(
+      exported,
+      knownStructNames,
+      stringStructNames,
+      knownCodableNames,
+    ),
+  )
 
   return errors
 }
@@ -117,6 +142,8 @@ function validateUnsupportedTypes(
  */
 function validateBorrowedBufferRestrictions(
   exported: ExportedFunction[],
+  knownStructNames: Set<string>,
+  stringStructNames: Set<string>,
   knownCodableNames: Set<string>,
 ): ValidationError[] {
   const errors: ValidationError[] = []
@@ -149,9 +176,9 @@ function validateBorrowedBufferRestrictions(
         severity: 'error',
       })
     }
-    if (fn.params.some((parameter) => isEscapingCallback(parameter.type))) {
+    if (fn.params.some((parameter) => isSourceClosure(parameter.type))) {
       errors.push({
-        message: `Export function '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names} and cannot declare an @escaping callback. Store copied Data if work must outlive the call.`,
+        message: `Export function '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names} and cannot declare an @escaping callback or another closure parameter. Store copied Data if work must outlive the call.`,
         line: fn.line,
         severity: 'error',
       })
@@ -161,23 +188,343 @@ function validateBorrowedBufferRestrictions(
       const generatedCppAbiLengthName = cppIdentifier(generatedSwiftLengthName)
       const generatedCppLengthName = `${cppIdentifier(parameter.name)}_len`
       for (const candidate of fn.params) {
-        if (
-          candidate !== parameter &&
-          (candidate.name === generatedSwiftLengthName ||
-            cppIdentifier(candidate.name) === generatedCppAbiLengthName ||
-            cppIdentifier(candidate.name) === generatedCppLengthName)
-        ) {
+        if (candidate === parameter) continue
+
+        const hasLengthNameConflict =
+          candidate.name === generatedSwiftLengthName ||
+          cppIdentifier(candidate.name) === generatedCppAbiLengthName ||
+          cppIdentifier(candidate.name) === generatedCppLengthName
+        if (hasLengthNameConflict) {
           errors.push({
             message: `Export function '${fn.name}' parameter '${candidate.name}' conflicts with generated length naming for borrowed UnsafeRawBufferPointer '${parameter.name}'. Rename the source parameter.`,
             line: fn.line,
             severity: 'error',
           })
+          continue
         }
+      }
+    }
+
+    const reportedIdentifierConflicts = new Set<string>()
+    const reportIdentifierConflict = (
+      parameter: (typeof fn.params)[number],
+      identifier: string,
+    ) => {
+      const key = `${parameter.name}:${identifier}`
+      if (reportedIdentifierConflicts.has(key)) return
+      reportedIdentifierConflicts.add(key)
+      errors.push({
+        message: `Export function '${fn.name}' parameter '${parameter.name}' conflicts with generated bridge identifier '${identifier}' for a borrowed UnsafeRawBufferPointer input. Rename the source parameter.`,
+        line: fn.line,
+        severity: 'error',
+      })
+    }
+
+    const generatedSwiftAbiNames = new Map<string, (typeof fn.params)[number]>()
+    for (const parameter of fn.params) {
+      const generatedNames = [parameter.name]
+      const transport = bridgeTransportForType(parameter.type, knownCodableNames)
+      if (transport === 'borrowed' || classifyNativeSwiftType(parameter.type) === 'string') {
+        generatedNames.push(`${parameter.name}Len`)
+      }
+      for (const generatedName of generatedNames) {
+        if (generatedSwiftAbiNames.has(generatedName)) {
+          reportIdentifierConflict(parameter, generatedName)
+        } else {
+          generatedSwiftAbiNames.set(generatedName, parameter)
+        }
+      }
+    }
+
+    const generatedSwiftParameterNames = new Set(['out_error'])
+    if (classifyNativeSwiftType(fn.returnType) === 'string') {
+      generatedSwiftParameterNames.add('out_result_len')
+    }
+    for (const parameter of fn.params) {
+      if (generatedSwiftParameterNames.has(parameter.name)) {
+        reportIdentifierConflict(parameter, parameter.name)
+      }
+    }
+
+    for (const sourceParameter of fn.params) {
+      const generatedSwiftLocalNames = [`swift_${sourceParameter.name}`]
+      if (sourceParameter.type.replace(/\s+/g, '') === '[UInt8]') {
+        generatedSwiftLocalNames.push(`binary_${sourceParameter.name}`)
+      }
+      for (const generatedSwiftLocalName of generatedSwiftLocalNames) {
+        for (const candidate of fn.params) {
+          if (candidate !== sourceParameter && candidate.name === generatedSwiftLocalName) {
+            reportIdentifierConflict(candidate, generatedSwiftLocalName)
+          }
+        }
+      }
+    }
+
+    const returnTransport = bridgeTransportForType(fn.returnType, knownCodableNames)
+    const generatedSwiftReturnLocalNames = [
+      ...(returnTransport === 'json' ? ['encoded'] : []),
+      ...(knownStructNames.has(fn.returnType.trim()) ? ['cResult'] : []),
+    ]
+    for (const generatedSwiftReturnLocalName of generatedSwiftReturnLocalNames) {
+      for (const parameter of fn.params) {
+        if (parameter.name === generatedSwiftReturnLocalName) {
+          reportIdentifierConflict(parameter, generatedSwiftReturnLocalName)
+        }
+      }
+    }
+
+    const generatedCppAbiNames = new Map<string, (typeof fn.params)[number]>()
+    for (const parameter of fn.params) {
+      const generatedNames = [cppIdentifier(parameter.name)]
+      const transport = bridgeTransportForType(parameter.type, knownCodableNames)
+      if (transport === 'borrowed' || classifyNativeSwiftType(parameter.type) === 'string') {
+        generatedNames.push(cppIdentifier(`${parameter.name}Len`))
+      }
+      for (const generatedName of generatedNames) {
+        if (generatedCppAbiNames.has(generatedName)) {
+          reportIdentifierConflict(parameter, generatedName)
+        } else {
+          generatedCppAbiNames.set(generatedName, parameter)
+        }
+      }
+    }
+
+    const generatedCppInputLocalNames = new Map<string, (typeof fn.params)[number]>()
+    for (const parameter of fn.params) {
+      const name = cppIdentifier(parameter.name)
+      const transport = bridgeTransportForType(parameter.type, knownCodableNames)
+      const category = classifyNativeSwiftType(parameter.type)
+      const generatedNames: string[] = []
+      if (
+        transport === 'borrowed' ||
+        transport === 'json' ||
+        transport === 'data' ||
+        category === 'string'
+      ) {
+        generatedNames.push(`${name}_len`)
+      }
+      if (transport === 'json') generatedNames.push(`${name}_json`)
+      if (generatesOptionalJsonScalarValidation(parameter, knownCodableNames)) {
+        generatedNames.push(`${name}_type`, `${name}_validated`)
+      }
+      if (transport === 'data') generatedNames.push(`${name}_data`, `${name}_base64`)
+      if (category === 'string' && parameter.type.endsWith('?')) generatedNames.push(`${name}_type`)
+      if (knownStructNames.has(parameter.type.trim())) generatedNames.push(`${name}_ok`)
+      for (const generatedName of generatedNames) {
+        generatedCppInputLocalNames.set(generatedName, parameter)
+      }
+    }
+    for (const parameter of fn.params) {
+      const sourceName = cppIdentifier(parameter.name)
+      const owner = generatedCppInputLocalNames.get(sourceName)
+      if (owner && owner !== parameter) reportIdentifierConflict(parameter, sourceName)
+    }
+
+    const generatedCppLocalNames = new Set(['env', 'info', 'argc', 'argv', 'swift_error'])
+    if (fn.returnType !== 'Void' && fn.returnType !== '()') {
+      generatedCppLocalNames.add('result')
+      generatedCppLocalNames.add('js_result')
+    }
+    if (classifyNativeSwiftType(fn.returnType) === 'string') {
+      generatedCppLocalNames.add('result_len')
+      generatedCppLocalNames.add('outResultLen')
+      generatedCppLocalNames.add('guard')
+      if (fn.returnType.endsWith('?')) generatedCppLocalNames.add('js_null')
+    }
+    if (returnTransport === 'json' || returnTransport === 'data') {
+      generatedCppLocalNames.add('guard')
+    }
+    if (returnTransport === 'data') {
+      generatedCppLocalNames.add('swift_node_result_bytes')
+    }
+    if (fn.returnType === 'Void' || fn.returnType === '()') {
+      generatedCppLocalNames.add('js_undefined')
+    }
+    if (
+      fn.params.some((parameter) =>
+        needsGeneratedInputCleanup(parameter, stringStructNames, knownCodableNames),
+      )
+    ) {
+      generatedCppLocalNames.add('swift_node_cleanup_args')
+    }
+
+    for (const parameter of fn.params) {
+      if (generatedCppLocalNames.has(cppIdentifier(parameter.name))) {
+        reportIdentifierConflict(parameter, cppIdentifier(parameter.name))
       }
     }
   }
 
   return errors
+}
+
+/**
+ * Keep the generated synchronous wrapper namespace collision-free even for
+ * exports that do not use a borrowed buffer. This also prevents a generated
+ * helper introduced for one transport from breaking an adjacent transport.
+ */
+function validateSynchronousBridgeIdentifiers(
+  exported: ExportedFunction[],
+  knownStructNames: Set<string>,
+  stringStructNames: Set<string>,
+  knownCodableNames: Set<string>,
+): ValidationError[] {
+  const errors: ValidationError[] = []
+
+  for (const fn of exported) {
+    const hasBorrowedInput = fn.params.some(
+      (parameter) => bridgeTransportForType(parameter.type, knownCodableNames) === 'borrowed',
+    )
+    const actorRunsAsync = !!fn.actorIsolation && fn.actorIsolation !== 'MainActor'
+    const hasCallback = fn.params.some((parameter) => isEscapingCallback(parameter.type))
+    if (hasBorrowedInput || fn.isAsync || actorRunsAsync || hasCallback) continue
+
+    const reported = new Set<string>()
+    const report = (parameter: (typeof fn.params)[number], identifier: string) => {
+      const key = `${parameter.name}:${identifier}`
+      if (reported.has(key)) return
+      reported.add(key)
+      errors.push({
+        message: `Export function '${fn.name}' parameter '${parameter.name}' conflicts with generated bridge identifier '${identifier}'. Rename the source parameter.`,
+        line: fn.line,
+        severity: 'error',
+      })
+    }
+    const register = (
+      names: Map<string, (typeof fn.params)[number]>,
+      identifier: string,
+      parameter: (typeof fn.params)[number],
+    ) => {
+      const owner = names.get(identifier)
+      if (owner && owner !== parameter) report(parameter, identifier)
+      else names.set(identifier, parameter)
+    }
+
+    const returnTransport = bridgeTransportForType(fn.returnType, knownCodableNames)
+    const returnCategory = classifyNativeSwiftType(fn.returnType)
+    const directStringReturn = returnTransport === null && returnCategory === 'string'
+    const needsErrorBridge =
+      fn.throws ||
+      returnTransport !== null ||
+      fn.params.some(
+        (parameter) => bridgeTransportForType(parameter.type, knownCodableNames) !== null,
+      )
+
+    const swiftAbiNames = new Map<string, (typeof fn.params)[number]>()
+    const cppNames = new Map<string, (typeof fn.params)[number]>()
+    for (const parameter of fn.params) {
+      const transport = bridgeTransportForType(parameter.type, knownCodableNames)
+      const category = classifyNativeSwiftType(parameter.type)
+      const name = cppIdentifier(parameter.name)
+      register(swiftAbiNames, parameter.name, parameter)
+      register(cppNames, name, parameter)
+      if (category === 'string') {
+        register(swiftAbiNames, `${parameter.name}Len`, parameter)
+        register(cppNames, cppIdentifier(`${parameter.name}Len`), parameter)
+      }
+      if (transport === 'json') {
+        register(cppNames, `${name}_json`, parameter)
+        register(cppNames, `${name}_len`, parameter)
+        if (generatesOptionalJsonScalarValidation(parameter, knownCodableNames)) {
+          register(cppNames, `${name}_type`, parameter)
+          register(cppNames, `${name}_validated`, parameter)
+        }
+      }
+      if (transport === 'data') {
+        register(cppNames, `${name}_data`, parameter)
+        register(cppNames, `${name}_len`, parameter)
+        register(cppNames, `${name}_base64`, parameter)
+      }
+      if (category === 'string') {
+        register(cppNames, `${name}_len`, parameter)
+        if (parameter.type.endsWith('?')) register(cppNames, `${name}_type`, parameter)
+      }
+      if (knownStructNames.has(parameter.type.trim())) register(cppNames, `${name}_ok`, parameter)
+      register(swiftAbiNames, `swift_${parameter.name}`, parameter)
+      if (parameter.type.replace(/\s+/g, '') === '[UInt8]') {
+        register(swiftAbiNames, `binary_${parameter.name}`, parameter)
+      }
+    }
+
+    if (directStringReturn) {
+      for (const parameter of fn.params) {
+        if (parameter.name === 'out_result_len') report(parameter, 'out_result_len')
+        if (cppIdentifier(parameter.name) === 'outResultLen') report(parameter, 'outResultLen')
+      }
+    }
+    if (needsErrorBridge) {
+      for (const parameter of fn.params) {
+        if (parameter.name === 'out_error') report(parameter, 'out_error')
+        if (cppIdentifier(parameter.name) === 'out_error') report(parameter, 'out_error')
+      }
+    }
+    const generatedSwiftReturnLocals = [
+      ...(returnTransport === 'json' ? ['encoded'] : []),
+      ...(knownStructNames.has(fn.returnType.trim()) ? ['cResult'] : []),
+    ]
+    for (const generatedSwiftReturnLocal of generatedSwiftReturnLocals) {
+      for (const parameter of fn.params) {
+        if (parameter.name === generatedSwiftReturnLocal)
+          report(parameter, generatedSwiftReturnLocal)
+      }
+    }
+
+    const fixedLocals = new Set(['env', 'info', 'argc', 'argv'])
+    if (needsErrorBridge) fixedLocals.add('swift_error')
+    if (returnCategory === 'void') fixedLocals.add('js_undefined')
+    else {
+      fixedLocals.add('result')
+      fixedLocals.add('js_result')
+    }
+    if (directStringReturn) {
+      fixedLocals.add('result_len')
+      fixedLocals.add('guard')
+      if (fn.returnType.endsWith('?')) fixedLocals.add('js_null')
+    }
+    if (returnTransport === 'json' || returnTransport === 'data') fixedLocals.add('guard')
+    if (returnTransport === 'data') fixedLocals.add('swift_node_result_bytes')
+    if (
+      fn.params.some((parameter) =>
+        needsGeneratedInputCleanup(parameter, stringStructNames, knownCodableNames),
+      )
+    ) {
+      fixedLocals.add('swift_node_cleanup_args')
+    }
+    for (const parameter of fn.params) {
+      const name = cppIdentifier(parameter.name)
+      if (fixedLocals.has(name)) report(parameter, name)
+    }
+  }
+
+  return errors
+}
+
+function isSourceClosure(type: string): boolean {
+  return type.includes('->') && !type.includes('@convention(c)')
+}
+
+function generatesOptionalJsonScalarValidation(
+  parameter: ExportedFunction['params'][number],
+  knownCodableNames: Set<string>,
+): boolean {
+  if (bridgeTransportForType(parameter.type, knownCodableNames) !== 'json') return false
+  const nativeType = parameter.type.replace(/\s+/g, '')
+  if (!nativeType.endsWith('?')) return false
+  return ['Int', 'Int32', 'Int64', 'Double', 'Float'].includes(nativeType.slice(0, -1))
+}
+
+function needsGeneratedInputCleanup(
+  parameter: ExportedFunction['params'][number],
+  stringStructNames: Set<string>,
+  knownCodableNames: Set<string>,
+): boolean {
+  const transport = bridgeTransportForType(parameter.type, knownCodableNames)
+  return (
+    transport === 'json' ||
+    transport === 'data' ||
+    classifyNativeSwiftType(parameter.type) === 'string' ||
+    stringStructNames.has(parameter.type.trim())
+  )
 }
 
 function getSuggestion(type: string): string {

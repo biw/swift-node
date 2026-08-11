@@ -736,10 +736,10 @@ describe('generateAddonCpp', () => {
       isAsync: false,
     }
     const body = extractFnBody(generateAddonCpp([fn], 'test'), 'static napi_value js_Mod_repeat')
-    expect(body).toContain('auto cleanup_args = [&]()')
+    expect(body).toContain('auto swift_node_cleanup_args = [&]()')
     expect(body).toContain('delete[] value')
     expect(body).toContain("Expected argument 'count' to be a number")
-    expect(body).toContain('cleanup_args(); return nullptr;')
+    expect(body).toContain('swift_node_cleanup_args(); return nullptr;')
   })
 
   // Struct tests

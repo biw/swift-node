@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vite-plus/test'
 import { validateExports } from '../src/validator'
-import { parseSwiftCodableTypes } from '../src/parser'
-import type { ExportedFunction } from '../src/parser'
+import {
+  parseExportedFunctions,
+  parseSwiftCodableTypes,
+  parseSwiftGlobalActorNames,
+} from '../src/parser'
+import type { ExportedFunction, SwiftStruct } from '../src/parser'
 
 const makeExported = (overrides: Partial<ExportedFunction> = {}): ExportedFunction => ({
   name: 'testFunc',
@@ -12,6 +16,16 @@ const makeExported = (overrides: Partial<ExportedFunction> = {}): ExportedFuncti
   line: 1,
   ...overrides,
 })
+
+const profileWithString: SwiftStruct = {
+  name: 'Profile',
+  fields: [{ name: 'name', type: 'String', category: 'string' }],
+}
+
+const pointWithoutString: SwiftStruct = {
+  name: 'Point',
+  fields: [{ name: 'x', type: 'Double', category: 'double' }],
+}
 
 describe('validateExports', () => {
   describe('stream exports', () => {
@@ -403,6 +417,102 @@ struct Payload: Codable {
       ).toBe(true)
     })
 
+    it('rejects unsafe borrowed-buffer combinations parsed from source', () => {
+      const source = `
+@globalActor
+actor Database {
+  static let shared = Database()
+}
+
+// @swift-node:export
+func asyncBytes(_ bytes: UnsafeRawBufferPointer) async {}
+
+// @swift-node:export
+// @swift-node:stream
+func streamBytes(_ bytes: UnsafeRawBufferPointer) -> AsyncStream<String> { fatalError() }
+
+// @swift-node:export
+@Database
+func actorBytes(_ bytes: UnsafeRawBufferPointer) {}
+
+// @swift-node:export
+func callbackBytes(_ bytes: UnsafeRawBufferPointer, _ done: @escaping () -> Void) {}
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported.find((fn) => fn.name === 'actorBytes')?.actorIsolation).toBe('Database')
+      expect(errors.some((error) => error.message.includes('cannot be async'))).toBe(true)
+      expect(errors.some((error) => error.message.includes('Streams outlive'))).toBe(true)
+      expect(errors.some((error) => error.message.includes('@Database'))).toBe(true)
+      expect(errors.some((error) => error.message.includes('@escaping callback'))).toBe(true)
+    })
+
+    it('rejects a borrowed buffer isolated to a custom global actor from another source', () => {
+      const actorsSource = `
+actor Executor {}
+
+@globalActor
+struct Database {
+  static let shared = Executor()
+}
+`
+      const source = `
+// @swift-node:export
+@Database
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source, parseSwiftGlobalActorNames(actorsSource))
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].actorIsolation).toBe('Database')
+      expect(errors.some((error) => error.message.includes('@Database'))).toBe(true)
+    })
+
+    it('fails closed for an imported custom global actor without an Actor suffix', () => {
+      const source = `
+import ActorLibrary
+
+// @swift-node:export
+@Database
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].actorIsolation).toBe('Database')
+      expect(errors.some((error) => error.message.includes('@Database'))).toBe(true)
+    })
+
+    it('rejects a borrowed buffer on a qualified imported global actor', () => {
+      const source = `
+// @swift-node:export
+@ActorLibrary.Database
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].actorIsolation).toBe('ActorLibrary.Database')
+      expect(errors.some((error) => error.message.includes('@ActorLibrary.Database'))).toBe(true)
+    })
+
+    it('rejects non-escaping closures beside borrowed inputs', () => {
+      const fn = makeExported({
+        name: 'consume',
+        params: [
+          { label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'done', type: '() -> Void' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc consume(_ bytes: UnsafeRawBufferPointer, _ done: () -> Void) {}',
+      )
+
+      expect(errors.some((error) => error.message.includes('closure parameter'))).toBe(true)
+    })
+
     it('rejects borrowed buffers as stream elements', () => {
       const fn = makeExported({
         name: 'streamBytes',
@@ -436,6 +546,225 @@ struct Payload: Codable {
       expect(
         errors.filter((error) => error.message.includes('conflicts with generated length naming')),
       ).toHaveLength(4)
+    })
+
+    it('rejects borrowed inputs that collide with generated ABI and local identifiers', () => {
+      const fn = makeExported({
+        name: 'bridgeNames',
+        returnType: 'String',
+        params: [
+          { label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'swift_bytes', type: 'Int' },
+          { label: '_', name: 'out_error', type: 'Int' },
+          { label: '_', name: 'swift_error', type: 'Int' },
+          { label: '_', name: 'result', type: 'Int' },
+          { label: '_', name: 'result_len', type: 'Int' },
+          { label: '_', name: 'out_result_len', type: 'Int' },
+          { label: '_', name: 'outResultLen', type: 'Int' },
+          { label: '_', name: 'env', type: 'Int' },
+          { label: '_', name: 'info', type: 'Int' },
+          { label: '_', name: 'argc', type: 'Int' },
+          { label: '_', name: 'argv', type: 'Int' },
+          { label: '_', name: 'js_result', type: 'Int' },
+          { label: '_', name: 'guard', type: 'Int' },
+          { label: '_', name: 'friend', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: '_swift_node_friend', type: 'Int' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc bridgeNames(_ bytes: UnsafeRawBufferPointer, _ swift_bytes: Int, _ out_error: Int, _ swift_error: Int, _ result: Int, _ result_len: Int, _ out_result_len: Int, _ outResultLen: Int, _ env: Int, _ info: Int, _ argc: Int, _ argv: Int, _ js_result: Int, _ guard: Int, _ friend: UnsafeRawBufferPointer, _ _swift_node_friend: Int) -> String { "" }',
+      )
+
+      for (const name of [
+        'swift_bytes',
+        'out_error',
+        'swift_error',
+        'result',
+        'result_len',
+        'out_result_len',
+        'outResultLen',
+        'env',
+        'info',
+        'argc',
+        'argv',
+        'js_result',
+        'guard',
+        '_swift_node_friend',
+      ]) {
+        expect(errors.some((error) => error.message.includes(`'${name}'`))).toBe(true)
+      }
+    })
+
+    it('rejects generated Data conversion locals adjacent to borrowed inputs', () => {
+      const fn = makeExported({
+        name: 'dataNames',
+        params: [
+          { label: '_', name: 'payload', type: 'Data' },
+          { label: '_', name: 'payload_base64', type: 'UnsafeRawBufferPointer' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc dataNames(_ payload: Data, _ payload_base64: UnsafeRawBufferPointer) {}',
+      )
+
+      expect(errors.some((error) => error.message.includes("'payload_base64'"))).toBe(true)
+    })
+
+    it('rejects remaining borrowed bridge temporary collisions', () => {
+      const fn = makeExported({
+        name: 'bridgeTemps',
+        returnType: 'Profile',
+        params: [
+          { label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'payload', type: '[UInt8]' },
+          { label: '_', name: 'binary_payload', type: 'Int' },
+          { label: '_', name: 'maybe', type: 'Int?' },
+          { label: '_', name: 'maybe_type', type: 'Int' },
+          { label: '_', name: 'maybe_validated', type: 'Int' },
+          { label: '_', name: 'profile', type: 'Profile' },
+          { label: '_', name: 'swift_node_cleanup_args', type: 'Int' },
+          { label: '_', name: 'cResult', type: 'Int' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc bridgeTemps(_ bytes: UnsafeRawBufferPointer, _ payload: [UInt8], _ binary_payload: Int, _ maybe: Int?, _ maybe_type: Int, _ maybe_validated: Int, _ profile: Profile, _ swift_node_cleanup_args: Int, _ cResult: Int) -> Profile { fatalError() }',
+        [profileWithString],
+      )
+
+      for (const name of [
+        'binary_payload',
+        'maybe_type',
+        'maybe_validated',
+        'swift_node_cleanup_args',
+        'cResult',
+      ]) {
+        expect(errors.some((error) => error.message.includes(`'${name}'`))).toBe(true)
+      }
+    })
+
+    it('does not reserve the cleanup helper for numeric-only ABI structs', () => {
+      const fn = makeExported({
+        name: 'numericStruct',
+        params: [
+          { label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'point', type: 'Point' },
+          { label: '_', name: 'swift_node_cleanup_args', type: 'Int' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc numericStruct(_ bytes: UnsafeRawBufferPointer, _ point: Point, _ swift_node_cleanup_args: Int) {}',
+        [pointWithoutString],
+      )
+
+      expect(errors.some((error) => error.message.includes("'swift_node_cleanup_args'"))).toBe(
+        false,
+      )
+    })
+
+    it('rejects the JSON return encoder local beside a borrowed input', () => {
+      const fn = makeExported({
+        name: 'encodedResult',
+        returnType: '[String]',
+        params: [
+          { label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'encoded', type: 'Int' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc encodedResult(_ bytes: UnsafeRawBufferPointer, _ encoded: Int) -> [String] { [] }',
+      )
+
+      expect(errors.some((error) => error.message.includes("'encoded'"))).toBe(true)
+    })
+
+    it('rejects synchronous wrapper identifiers even without a borrowed input', () => {
+      const fn = makeExported({
+        name: 'ordinaryNames',
+        returnType: 'Data',
+        params: [
+          { label: '_', name: 'value', type: 'String' },
+          { label: '_', name: 'swift_node_cleanup_args', type: 'Int' },
+          { label: '_', name: 'swift_node_result_bytes', type: 'Int' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc ordinaryNames(_ value: String, _ swift_node_cleanup_args: Int, _ swift_node_result_bytes: Int) -> Data { Data() }',
+      )
+
+      for (const name of ['swift_node_cleanup_args', 'swift_node_result_bytes']) {
+        expect(errors.some((error) => error.message.includes(`'${name}'`))).toBe(true)
+      }
+    })
+
+    it('rejects Swift return-temporary names even without a borrowed input', () => {
+      const structFn = makeExported({
+        name: 'structResult',
+        returnType: 'Profile',
+        params: [{ label: '_', name: 'cResult', type: 'Int' }],
+      })
+      const jsonFn = makeExported({
+        name: 'jsonResult',
+        returnType: '[String]',
+        params: [{ label: '_', name: 'encoded', type: 'Int' }],
+      })
+
+      expect(
+        validateExports(
+          [structFn],
+          '// @swift-node:export\nfunc structResult(_ cResult: Int) -> Profile { fatalError() }',
+          ['Profile'],
+        ).some((error) => error.message.includes("'cResult'")),
+      ).toBe(true)
+      expect(
+        validateExports(
+          [jsonFn],
+          '// @swift-node:export\nfunc jsonResult(_ encoded: Int) -> [String] { [] }',
+        ).some((error) => error.message.includes("'encoded'")),
+      ).toBe(true)
+    })
+
+    it('rejects expanded String ABI names after C++ sanitization', () => {
+      const fn = makeExported({
+        name: 'unicodeNames',
+        params: [
+          { label: '_', name: 'é', type: 'String' },
+          { label: '_', name: '_Len', type: 'Int' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc unicodeNames(_ é: String, _ _Len: Int) {}',
+      )
+
+      expect(errors.some((error) => error.message.includes("'_Len'"))).toBe(true)
+    })
+
+    it('rejects reverse and C++ local identifier collisions around borrowed inputs', () => {
+      const fn = makeExported({
+        name: 'reverseNames',
+        params: [
+          { label: '_', name: 'key', type: 'String' },
+          { label: '_', name: 'keyLen', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'value', type: 'Int' },
+          { label: '_', name: 'swift_value', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'payload', type: 'Data' },
+          { label: '_', name: 'payload_len', type: 'UnsafeRawBufferPointer' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc reverseNames(_ key: String, _ keyLen: UnsafeRawBufferPointer, _ value: Int, _ swift_value: UnsafeRawBufferPointer, _ payload: Data, _ payload_len: UnsafeRawBufferPointer) {}',
+      )
+
+      for (const name of ['keyLen', 'swift_value', 'payload_len']) {
+        expect(errors.some((error) => error.message.includes(`'${name}'`))).toBe(true)
+      }
     })
 
     it('allows borrowed buffers in synchronous MainActor exports', () => {

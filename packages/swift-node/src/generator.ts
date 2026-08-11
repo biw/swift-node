@@ -773,7 +773,12 @@ function generateSyncWrapper(fn: SwiftFunction, structs: SwiftStruct[] = []): st
     )
     lines.push(`    if (!swift_node_expect_argc(env, argc, ${jsP.length})) return nullptr;`)
     lines.push('')
-    generateArgConversions(lines, jsP, structs, cleanupInputs ? 'cleanup_args' : undefined)
+    generateArgConversions(
+      lines,
+      jsP,
+      structs,
+      cleanupInputs ? 'swift_node_cleanup_args' : undefined,
+    )
     lines.push('')
   } else {
     lines.push(
@@ -810,7 +815,7 @@ function generateSyncWrapper(fn: SwiftFunction, structs: SwiftStruct[] = []): st
 
   // Free string input buffers and struct string fields
   if (cleanupInputs) {
-    lines.push('    cleanup_args();')
+    lines.push('    swift_node_cleanup_args();')
   } else {
     for (const p of jsP) {
       const name = cppIdentifier(p.name)
@@ -965,9 +970,9 @@ function generateAsyncWrapper(fn: SwiftFunction): string {
           break
         }
         if (fn.returnTransport === 'data') {
-          lines.push('    std::vector<uint8_t> bytes;')
+          lines.push('    std::vector<uint8_t> swift_node_result_bytes;')
           lines.push(
-            '    result_ok = swift_node_base64_decode(ctx->result, &bytes) && swift_node_napi_ok(env, napi_create_buffer_copy(env, bytes.size(), bytes.data(), nullptr, &js_result), "Failed to create Data return buffer");',
+            '    result_ok = swift_node_base64_decode(ctx->result, &swift_node_result_bytes) && swift_node_napi_ok(env, napi_create_buffer_copy(env, swift_node_result_bytes.size(), swift_node_result_bytes.data(), nullptr, &js_result), "Failed to create Data return buffer");',
           )
           lines.push('    free(const_cast<char*>(ctx->result));')
           break
@@ -1691,13 +1696,13 @@ function generateReturnConversion(
   }
   if (transport === 'data') {
     lines.push('    AutoFreeStr guard(result);')
-    lines.push('    std::vector<uint8_t> bytes;')
+    lines.push('    std::vector<uint8_t> swift_node_result_bytes;')
     lines.push(
-      '    if (!swift_node_base64_decode(result, &bytes)) return swift_node_throw_type_error(env, "Native Data return is not valid base64");',
+      '    if (!swift_node_base64_decode(result, &swift_node_result_bytes)) return swift_node_throw_type_error(env, "Native Data return is not valid base64");',
     )
     lines.push('    napi_value js_result;')
     lines.push(
-      '    if (!swift_node_napi_ok(env, napi_create_buffer_copy(env, bytes.size(), bytes.data(), nullptr, &js_result), "Failed to create Data return buffer")) return nullptr;',
+      '    if (!swift_node_napi_ok(env, napi_create_buffer_copy(env, swift_node_result_bytes.size(), swift_node_result_bytes.data(), nullptr, &js_result), "Failed to create Data return buffer")) return nullptr;',
     )
     lines.push('    return js_result;')
     return

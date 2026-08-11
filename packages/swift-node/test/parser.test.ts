@@ -7,6 +7,7 @@ import {
   isCallbackType,
   isEscapingCallback,
   parseExportedFunctions,
+  parseSwiftGlobalActorNames,
   parseSwiftCodableTypes,
   splitParams,
   bridgeTransportForType,
@@ -499,6 +500,63 @@ func updateTitle(_ title: String) -> String {
     const fns = parseExportedFunctions(source)
     expect(fns).toHaveLength(1)
     expect(fns[0].actorIsolation).toBe('MainActor')
+  })
+
+  it('records a source-local custom global actor annotation for an exported function', () => {
+    const source = `
+actor Executor {}
+
+@globalActor
+public struct Database {
+    static let shared = Executor()
+}
+
+// @swift-node:export
+@Database
+func read(_ key: String) -> String {
+    key
+}
+`
+    const fns = parseExportedFunctions(source)
+    expect(fns).toHaveLength(1)
+    expect(fns[0].actorIsolation).toBe('Database')
+  })
+
+  it('recognizes a custom global actor declared in another source file', () => {
+    const actorsSource = `
+actor Executor {}
+
+@globalActor
+struct Database {
+    static let shared = Executor()
+}
+`
+    const exportSource = `
+// @swift-node:export
+@Database
+func read(_ key: String) -> String {
+    key
+}
+`
+    const fns = parseExportedFunctions(exportSource, parseSwiftGlobalActorNames(actorsSource))
+    expect(fns).toHaveLength(1)
+    expect(fns[0].actorIsolation).toBe('Database')
+  })
+
+  it('fails closed for qualified imported actors only on borrowed exports', () => {
+    const borrowed = parseExportedFunctions(`
+// @swift-node:export
+@ActorLibrary.Database
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`)
+    const ordinary = parseExportedFunctions(`
+// @swift-node:export
+@Logged
+func read(_ key: String) {}
+`)
+
+    expect(borrowed[0].actorIsolation).toBe('ActorLibrary.Database')
+    expect(ordinary[0].actorIsolation).toBeUndefined()
   })
 
   it('parses multiple exported functions', () => {
