@@ -1,6 +1,6 @@
 {
   "name": "swift-node-unplugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unplugin adapters that build and bundle Swift Node native assets.",
   "type": "module",
   "types": "./dist/index.d.ts",
@@ -102,7 +102,7 @@
     "test": "vp test run"
   },
   "peerDependencies": {
-    "swift-node": "^0.1.0"
+    "swift-node": "^0.1.1"
   },
   "dependencies": {
     "unplugin": "3.3.0"
