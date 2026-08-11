@@ -353,7 +353,10 @@ void tagged
     let emptyThrow = false
     try { firstByte(new Uint8Array(0)) } catch { emptyThrow = true }
     if (!emptyThrow) throw new Error('throwing borrowed-buffer call accepted an empty view')
-    for (const invalid of [{}, [1, 2], new ArrayBuffer(1), new DataView(new ArrayBuffer(1)), new Uint16Array([1])]) {
+    const shared = new SharedArrayBuffer(2)
+    const spoofedSharedView = new Uint8Array(shared)
+    Object.defineProperty(spoofedSharedView, 'buffer', { value: new ArrayBuffer(2) })
+    for (const invalid of [{}, [1, 2], new ArrayBuffer(1), new DataView(new ArrayBuffer(1)), new Uint16Array([1]), new Uint8Array(shared), Buffer.from(shared), spoofedSharedView]) {
       let threw = false
       try { byteLength(invalid) } catch { threw = true }
       if (!threw) throw new Error('borrowed input accepted an invalid binary value: ' + invalid.constructor.name)

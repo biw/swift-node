@@ -466,6 +466,7 @@ func read(_ bytes: UnsafeRawBufferPointer) {}
       const errors = validateExports(exported, source)
 
       expect(exported[0].actorIsolation).toBe('Database')
+      expect(exported[0].unrecognizedBorrowedAttributes).toBeUndefined()
       expect(errors.some((error) => error.message.includes('@Database'))).toBe(true)
     })
 
@@ -480,7 +481,8 @@ func read(_ bytes: UnsafeRawBufferPointer) {}
       const exported = parseExportedFunctions(source)
       const errors = validateExports(exported, source)
 
-      expect(exported[0].actorIsolation).toBe('Database')
+      expect(exported[0].actorIsolation).toBeUndefined()
+      expect(exported[0].unrecognizedBorrowedAttributes).toEqual(['Database'])
       expect(errors.some((error) => error.message.includes('@Database'))).toBe(true)
     })
 
@@ -493,8 +495,97 @@ func read(_ bytes: UnsafeRawBufferPointer) {}
       const exported = parseExportedFunctions(source)
       const errors = validateExports(exported, source)
 
-      expect(exported[0].actorIsolation).toBe('ActorLibrary.Database')
+      expect(exported[0].actorIsolation).toBeUndefined()
+      expect(exported[0].unrecognizedBorrowedAttributes).toEqual(['ActorLibrary.Database'])
       expect(errors.some((error) => error.message.includes('@ActorLibrary.Database'))).toBe(true)
+    })
+
+    it('rejects a borrowed buffer with an imported lowercase global actor annotation', () => {
+      const source = `
+// @swift-node:export
+@database
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].actorIsolation).toBeUndefined()
+      expect(exported[0].unrecognizedBorrowedAttributes).toEqual(['database'])
+      expect(errors.some((error) => error.message.includes('@database'))).toBe(true)
+    })
+
+    it('does not let a safe attribute mask an unknown borrowed attribute on the same line', () => {
+      const source = `
+// @swift-node:export
+@available(macOS 13, *) @database
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].unrecognizedBorrowedAttributes).toEqual(['database'])
+      expect(errors.some((error) => error.message.includes('@database'))).toBe(true)
+    })
+
+    it('ignores actor-looking text in comments and attribute arguments', () => {
+      const source = `
+// @swift-node:export
+// Keep behavior compatible with @MainActor.
+@Trace(message: "@MainActor")
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].actorIsolation).toBeUndefined()
+      expect(exported[0].unrecognizedBorrowedAttributes).toEqual(['Trace'])
+      expect(errors.some((error) => error.message.includes('@Trace'))).toBe(true)
+      expect(errors.some((error) => error.message.includes('@MainActor'))).toBe(false)
+    })
+
+    it('does not reject a borrowed export for annotation-like comment text', () => {
+      const source = `
+// @swift-node:export
+/// Reads @database bytes without copying them.
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+
+      expect(exported[0].actorIsolation).toBeUndefined()
+      expect(exported[0].unrecognizedBorrowedAttributes).toBeUndefined()
+      expect(validateExports(exported, source)).toHaveLength(0)
+    })
+
+    it('does not mislabel an attached macro as actor isolation on a borrowed export', () => {
+      const source = `
+// @swift-node:export
+@Trace
+func read(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].actorIsolation).toBeUndefined()
+      expect(exported[0].unrecognizedBorrowedAttributes).toEqual(['Trace'])
+      expect(
+        errors.some((error) => error.message.includes('unrecognized declaration attribute @Trace')),
+      ).toBe(true)
+      expect(errors.some((error) => error.message.includes('cannot use @Trace'))).toBe(false)
+    })
+
+    it('rejects escaped identifiers anywhere in a borrowed export before generation', () => {
+      const source = `
+// @swift-node:export
+func digest(_ \`class\`: UnsafeRawBufferPointer, _ \`struct\`: Int) -> Int { 0 }
+`
+      const exported = parseExportedFunctions(source)
+      const errors = validateExports(exported, source)
+
+      expect(exported[0].params[0].name).toBe('`class`')
+      expect(exported[0].params[1].name).toBe('`struct`')
+      expect(
+        errors.filter((error) => error.message.includes('escaped Swift identifier')),
+      ).toHaveLength(2)
     })
 
     it('rejects non-escaping closures beside borrowed inputs', () => {

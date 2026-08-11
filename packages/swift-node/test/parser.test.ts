@@ -555,7 +555,8 @@ func read(_ bytes: UnsafeRawBufferPointer) {}
 func read(_ key: String) {}
 `)
 
-    expect(borrowed[0].actorIsolation).toBe('ActorLibrary.Database')
+    expect(borrowed[0].actorIsolation).toBeUndefined()
+    expect(borrowed[0].unrecognizedBorrowedAttributes).toEqual(['ActorLibrary.Database'])
     expect(ordinary[0].actorIsolation).toBeUndefined()
   })
 

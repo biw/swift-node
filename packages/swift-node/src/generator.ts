@@ -1593,7 +1593,7 @@ function generateArgConversions(
         `    if (!swift_node_is_buffer_or_typedarray(env, argv[${i}], "Expected argument '${p.name}' to be a Uint8Array or Buffer")) ${fail}`,
       )
       lines.push(
-        `    if (!swift_node_get_binary_data(env, argv[${i}], &${name}, &${name}_len)) ${fail}`,
+        `    if (!swift_node_get_borrowed_binary_data(env, argv[${i}], &${name}, &${name}_len)) ${fail}`,
       )
       lines.push(
         `    if (${name}_len > static_cast<size_t>(std::numeric_limits<int64_t>::max())) { napi_throw_range_error(env, nullptr, "Borrowed buffer is too large"); ${fail} }`,

@@ -176,12 +176,28 @@ function validateBorrowedBufferRestrictions(
         severity: 'error',
       })
     }
+    for (const attribute of fn.unrecognizedBorrowedAttributes ?? []) {
+      errors.push({
+        message: `Export function '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names} with unrecognized declaration attribute @${attribute}. swift-node cannot verify that this attribute does not hop to another actor, so use Data or [UInt8] instead.`,
+        line: fn.line,
+        severity: 'error',
+      })
+    }
     if (fn.params.some((parameter) => isSourceClosure(parameter.type))) {
       errors.push({
         message: `Export function '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names} and cannot declare an @escaping callback or another closure parameter. Store copied Data if work must outlive the call.`,
         line: fn.line,
         severity: 'error',
       })
+    }
+    for (const parameter of fn.params) {
+      if (/^`[^`]+`$/.test(parameter.name)) {
+        errors.push({
+          message: `Export function '${fn.name}' parameter '${parameter.name}' is an escaped Swift identifier. UnsafeRawBufferPointer bridge parameters must use an unescaped identifier so generated ABI names remain valid.`,
+          line: fn.line,
+          severity: 'error',
+        })
+      }
     }
     for (const parameter of borrowedParams) {
       const generatedSwiftLengthName = `${parameter.name}Len`

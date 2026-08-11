@@ -381,7 +381,7 @@ describe('generateAddonCpp', () => {
     expect(header).toContain(
       'char* test_describeBytes(const void* bytes, int64_t bytesLen, int64_t* outResultLen, const char** out_error);',
     )
-    expect(body).toContain('swift_node_get_binary_data(env, argv[0], &bytes, &bytes_len)')
+    expect(body).toContain('swift_node_get_borrowed_binary_data(env, argv[0], &bytes, &bytes_len)')
     expect(body).toContain('Borrowed buffer is too large')
     expect(body).toContain(
       'test_describeBytes(bytes, static_cast<int64_t>(bytes_len), &result_len, &swift_error)',

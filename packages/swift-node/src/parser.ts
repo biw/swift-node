@@ -280,6 +280,12 @@ export interface ExportedFunction {
   isAsync: boolean
   /** The global actor annotation applied to the exported declaration, if any. */
   actorIsolation?: string
+  /**
+   * Declaration attributes on a borrowed-buffer export that source inspection
+   * cannot prove are non-isolating. They must be rejected rather than risk
+   * passing JavaScript-owned memory across an actor hop.
+   */
+  unrecognizedBorrowedAttributes?: string[]
   /** Set by `// @swift-node:stream`. */
   isStream?: boolean
   line: number // 1-based line number for error reporting
@@ -304,6 +310,48 @@ export function parseSwiftGlobalActorNames(source: string): Set<string> {
   for (const match of source.matchAll(pattern)) {
     names.add(match[1])
   }
+  return names
+}
+
+function parseDeclarationAttributeNames(annotations: string[]): string[] {
+  const names: string[] = []
+
+  for (const annotation of annotations) {
+    const line = annotation.trim()
+    let index = 0
+
+    while (line[index] === '@') {
+      const match = line.slice(index).match(/^@((?:\w+\.)*\w+)/)
+      if (!match) break
+      names.push(match[1])
+      index += match[0].length
+
+      while (/\s/.test(line[index] ?? '')) index++
+      if (line[index] !== '(') continue
+
+      let depth = 0
+      let quote: '"' | "'" | undefined
+      for (; index < line.length; index++) {
+        const character = line[index]
+        if (quote) {
+          if (character === '\\') index++
+          else if (character === quote) quote = undefined
+          continue
+        }
+        if (character === '"' || character === "'") {
+          quote = character
+        } else if (character === '(') {
+          depth++
+        } else if (character === ')' && --depth === 0) {
+          index++
+          break
+        }
+      }
+
+      while (/\s/.test(line[index] ?? '')) index++
+    }
+  }
+
   return names
 }
 
@@ -365,22 +413,39 @@ export function parseExportedFunctions(
     const hasBorrowedInput = params.some(
       (parameter) => classifyNativeSwiftType(parameter.type) === 'borrowed-buffer',
     )
-    const actorIsolation = annotations
-      .map((candidate) => candidate.trim().match(/^@((?:\w+\.)*\w+)$/)?.[1])
-      .find((candidate) => {
-        const shortName = candidate?.split('.').at(-1)
-        return (
-          candidate === 'MainActor' ||
-          candidate?.endsWith('Actor') ||
-          globalActorNames.has(candidate ?? '') ||
-          globalActorNames.has(shortName ?? '') ||
-          // An imported global actor may not use the conventional `Actor`
-          // suffix. Only fail closed for borrowed inputs: treating every
-          // type-like attribute as actor isolation would change ordinary
-          // exports that use attached macros or other attributes.
-          (hasBorrowedInput && shortName !== undefined && /^[A-Z]/.test(shortName))
+    const attributeNames = parseDeclarationAttributeNames(annotations)
+    const actorIsolation = attributeNames.find((candidate) => {
+      const shortName = candidate?.split('.').at(-1)
+      return (
+        candidate === 'MainActor' ||
+        candidate?.endsWith('Actor') ||
+        globalActorNames.has(candidate ?? '') ||
+        globalActorNames.has(shortName ?? '')
+      )
+    })
+    // A source-only parser cannot distinguish an imported global actor from an
+    // attached macro. For borrowed views, retain those attributes for the
+    // validator to reject explicitly instead of guessing that they are actors
+    // (which produced misleading errors for macros) or ignoring a possible
+    // actor hop (which could outlive the JS-owned view).
+    const unrecognizedBorrowedAttributes = hasBorrowedInput
+      ? attributeNames.filter(
+          (attribute) =>
+            attribute !== actorIsolation &&
+            !new Set([
+              'available',
+              'discardableResult',
+              'inlinable',
+              'usableFromInline',
+              '_transparent',
+              '_alwaysEmitIntoClient',
+              '_spi',
+              'preconcurrency',
+              'objc',
+              'nonobjc',
+            ]).has(attribute),
         )
-      })
+      : []
 
     functions.push({
       name,
@@ -389,6 +454,7 @@ export function parseExportedFunctions(
       throws: throws_,
       isAsync,
       ...(actorIsolation ? { actorIsolation } : {}),
+      ...(unrecognizedBorrowedAttributes.length > 0 ? { unrecognizedBorrowedAttributes } : {}),
       ...(isStream ? { isStream: true } : {}),
       line: i + 1, // 1-based
     })
