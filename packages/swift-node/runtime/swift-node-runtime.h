@@ -126,9 +126,6 @@ static inline bool swift_node_json_parse(napi_env env, const char* json_text, na
 }
 
 static inline bool swift_node_is_buffer_or_typedarray(napi_env env, napi_value value, const char* message) {
-    bool is_buffer = false;
-    if (!swift_node_napi_ok(env, napi_is_buffer(env, value, &is_buffer), message)) return false;
-    if (is_buffer) return true;
     napi_typedarray_type type;
     size_t length;
     void* data;
@@ -136,20 +133,39 @@ static inline bool swift_node_is_buffer_or_typedarray(napi_env env, napi_value v
     size_t byte_offset;
     napi_status status = napi_get_typedarray_info(env, value, &type, &length, &data, &arraybuffer, &byte_offset);
     if (status == napi_ok && type == napi_uint8_array) return true;
-    if (status != napi_ok && status != napi_invalid_arg) swift_node_napi_ok(env, status, message);
+    if (status == napi_ok) {
+        swift_node_throw_type_error(env, message);
+        return false;
+    }
+    if (status != napi_invalid_arg && !swift_node_napi_ok(env, status, message)) return false;
+
+    // Buffer is a Uint8Array in supported Node versions, but retain this
+    // fallback for runtimes that do not expose it through typedarray_info.
+    bool is_buffer = false;
+    if (!swift_node_napi_ok(env, napi_is_buffer(env, value, &is_buffer), message)) return false;
+    if (is_buffer) return true;
     napi_throw_type_error(env, nullptr, message);
     return false;
 }
 
 static inline bool swift_node_get_binary_data(napi_env env, napi_value value, void** data, size_t* length) {
+    napi_typedarray_type type;
+    napi_value arraybuffer;
+    size_t byte_offset;
+    napi_status status = napi_get_typedarray_info(env, value, &type, length, data, &arraybuffer, &byte_offset);
+    if (status == napi_ok) {
+        if (type == napi_uint8_array) return true;
+        napi_throw_type_error(env, nullptr, "Expected a Uint8Array or Buffer");
+        return false;
+    }
+    if (status != napi_invalid_arg && !swift_node_napi_ok(env, status, "Failed to read Uint8Array argument")) return false;
+
     bool is_buffer = false;
     if (!swift_node_napi_ok(env, napi_is_buffer(env, value, &is_buffer), "Failed to inspect binary argument")) return false;
     if (is_buffer) return swift_node_napi_ok(env, napi_get_buffer_info(env, value, data, length), "Failed to read Buffer argument");
 
-    napi_typedarray_type type;
-    napi_value arraybuffer;
-    size_t byte_offset;
-    return swift_node_napi_ok(env, napi_get_typedarray_info(env, value, &type, length, data, &arraybuffer, &byte_offset), "Failed to read Uint8Array argument");
+    napi_throw_type_error(env, nullptr, "Expected a Uint8Array or Buffer");
+    return false;
 }
 
 static inline std::string swift_node_base64_encode(const uint8_t* bytes, size_t length) {

@@ -161,6 +161,37 @@ describe('validateExports', () => {
       ).toHaveLength(0)
     })
 
+    it('accepts a non-optional borrowed UnsafeRawBufferPointer input', () => {
+      const fn = makeExported({
+        params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc testFunc(_ bytes: UnsafeRawBufferPointer) {}',
+      )
+      expect(errors).toHaveLength(0)
+    })
+
+    it('rejects optional and return borrowed buffer types', () => {
+      const optional = makeExported({
+        params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer?' }],
+      })
+      const returning = makeExported({ returnType: 'UnsafeRawBufferPointer' })
+
+      expect(
+        validateExports(
+          [optional],
+          '// @swift-node:export\nfunc testFunc(_ bytes: UnsafeRawBufferPointer?) {}',
+        ).some((error) => error.message.includes('must be non-optional')),
+      ).toBe(true)
+      expect(
+        validateExports(
+          [returning],
+          '// @swift-node:export\nfunc testFunc() -> UnsafeRawBufferPointer { fatalError() }',
+        ).some((error) => error.message.includes('input-only borrowed view')),
+      ).toBe(true)
+    })
+
     it('accepts explicitly annotated Codable types', () => {
       const fn = makeExported({
         params: [{ label: '_', name: 'request', type: 'ModelRequest' }],
@@ -332,6 +363,55 @@ struct Payload: Codable {
         '// @swift-node:export\nfunc slow(_ callback: @escaping (String) -> Void) async {\n}'
       const errors = validateExports([fn], source)
       expect(errors.some((e) => e.message.includes('unsupported async parameter'))).toBe(true)
+    })
+
+    it('rejects borrowed buffers in async, stream, global-actor, and callback exports', () => {
+      const bytes = { label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }
+      const async = makeExported({ name: 'asyncBytes', isAsync: true, params: [bytes] })
+      const stream = makeExported({
+        name: 'streamBytes',
+        isStream: true,
+        params: [bytes],
+        returnType: 'AsyncStream<String>',
+      })
+      const actor = makeExported({
+        name: 'actorBytes',
+        actorIsolation: 'StorageActor',
+        params: [bytes],
+      })
+      const callback = makeExported({
+        name: 'callbackBytes',
+        params: [bytes, { label: '_', name: 'done', type: '@escaping () -> Void' }],
+      })
+
+      const source = '// @swift-node:export\nfunc ignored() {}'
+      expect(
+        validateExports([async], source).some((error) => error.message.includes('cannot be async')),
+      ).toBe(true)
+      expect(
+        validateExports([stream], source).some((error) =>
+          error.message.includes('Streams outlive'),
+        ),
+      ).toBe(true)
+      expect(
+        validateExports([actor], source).some((error) => error.message.includes('@StorageActor')),
+      ).toBe(true)
+      expect(
+        validateExports([callback], source).some((error) =>
+          error.message.includes('@escaping callback'),
+        ),
+      ).toBe(true)
+    })
+
+    it('allows borrowed buffers in synchronous MainActor exports', () => {
+      const fn = makeExported({
+        name: 'mainBytes',
+        actorIsolation: 'MainActor',
+        params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }],
+      })
+      expect(
+        validateExports([fn], '// @swift-node:export\n@MainActor\nfunc mainBytes() {}'),
+      ).toHaveLength(0)
     })
   })
 

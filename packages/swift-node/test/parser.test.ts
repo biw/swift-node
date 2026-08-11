@@ -294,6 +294,10 @@ describe('classifyNativeSwiftType', () => {
     expect(classifyNativeSwiftType('[UInt8]')).toBe('buffer')
   })
 
+  it('classifies UnsafeRawBufferPointer as a borrowed buffer', () => {
+    expect(classifyNativeSwiftType('UnsafeRawBufferPointer')).toBe('borrowed-buffer')
+  })
+
   it('returns unknown for unsupported types', () => {
     expect(classifyNativeSwiftType('[String]')).toBe('unknown')
     expect(classifyNativeSwiftType('CustomType')).toBe('unknown')
@@ -304,6 +308,7 @@ describe('bridgeTransportForType', () => {
   it.each([
     ['data', 'Data', []],
     ['data', '[UInt8]', []],
+    ['borrowed', 'UnsafeRawBufferPointer', []],
     ['json', '[String?]', []],
     ['json', 'Int?', []],
     ['json', '[Data]', []],

@@ -37,6 +37,7 @@ export function validateExports(
   errors.push(...validateAsyncRestrictions(exported, new Set(knownStructNames), knownCodableNames))
   errors.push(...validateCallbackSignatures(exported))
   errors.push(...validateStreams(exported, knownCodableNames))
+  errors.push(...validateBorrowedBufferRestrictions(exported, knownCodableNames))
 
   return errors
 }
@@ -53,7 +54,13 @@ function validateUnsupportedTypes(
     for (const p of fn.params) {
       const cat = classifyNativeSwiftType(p.type)
       const transport = bridgeTransportForType(p.type, knownCodableNames)
-      if (cat === 'buffer' && !transport) {
+      if (cat === 'borrowed-buffer' && !transport) {
+        errors.push({
+          message: `Unsupported type '${p.type}' for parameter '${p.name}' in export function '${fn.name}'. UnsafeRawBufferPointer parameters must be non-optional.`,
+          line: fn.line,
+          severity: 'error',
+        })
+      } else if (cat === 'buffer' && !transport) {
         errors.push({
           message: `Unsupported type '${p.type}' for parameter '${p.name}' in export function '${fn.name}'.`,
           line: fn.line,
@@ -72,7 +79,13 @@ function validateUnsupportedTypes(
     if (fn.returnType !== 'Void' && !fn.isStream) {
       const retCat = classifyNativeSwiftType(fn.returnType)
       const transport = bridgeTransportForType(fn.returnType, knownCodableNames)
-      if (retCat === 'buffer' && !transport) {
+      if (retCat === 'borrowed-buffer' || transport === 'borrowed') {
+        errors.push({
+          message: `Unsupported return type '${fn.returnType}' in export function '${fn.name}'. UnsafeRawBufferPointer is an input-only borrowed view; return Data or [UInt8] instead.`,
+          line: fn.line,
+          severity: 'error',
+        })
+      } else if (retCat === 'buffer' && !transport) {
         errors.push({
           message: `Unsupported return type '${fn.returnType}' in export function '${fn.name}'.`,
           line: fn.line,
@@ -90,6 +103,57 @@ function validateUnsupportedTypes(
           severity: 'error',
         })
       }
+    }
+  }
+
+  return errors
+}
+
+/**
+ * A borrowed buffer aliases a JavaScript Buffer or Uint8Array. The generated
+ * C++ wrapper keeps that memory valid only until the native function returns,
+ * so it must never enter an async, stream, or escaping-callback bridge.
+ */
+function validateBorrowedBufferRestrictions(
+  exported: ExportedFunction[],
+  knownCodableNames: Set<string>,
+): ValidationError[] {
+  const errors: ValidationError[] = []
+
+  for (const fn of exported) {
+    const borrowedParams = fn.params.filter(
+      (parameter) => bridgeTransportForType(parameter.type, knownCodableNames) === 'borrowed',
+    )
+    if (borrowedParams.length === 0) continue
+
+    const names = borrowedParams.map((parameter) => `'${parameter.name}'`).join(', ')
+    if (fn.isAsync) {
+      errors.push({
+        message: `Export function '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names} and cannot be async. Borrowed bytes are valid only until the synchronous export call returns.`,
+        line: fn.line,
+        severity: 'error',
+      })
+    }
+    if (fn.isStream) {
+      errors.push({
+        message: `Stream export '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names}. Streams outlive the call; use Data or [UInt8] instead.`,
+        line: fn.line,
+        severity: 'error',
+      })
+    }
+    if (fn.actorIsolation && fn.actorIsolation !== 'MainActor') {
+      errors.push({
+        message: `Export function '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names} and cannot use @${fn.actorIsolation}. That actor bridge may run after the JavaScript call returns; use @MainActor or Data instead.`,
+        line: fn.line,
+        severity: 'error',
+      })
+    }
+    if (fn.params.some((parameter) => isEscapingCallback(parameter.type))) {
+      errors.push({
+        message: `Export function '${fn.name}' uses borrowed UnsafeRawBufferPointer parameter ${names} and cannot declare an @escaping callback. Store copied Data if work must outlive the call.`,
+        line: fn.line,
+        severity: 'error',
+      })
     }
   }
 

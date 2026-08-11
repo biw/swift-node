@@ -251,6 +251,47 @@ func notifyLater(_ value: Int, _ callback: @escaping (Int) -> Void) {
   `,
   },
   {
+    name: 'borrowed-buffer-input',
+    source: `// @swift-node:export
+func describeBytes(_ bytes: UnsafeRawBufferPointer) -> String {
+    let values = bytes.bindMemory(to: UInt8.self)
+    return "\\(bytes.count):" + values.map { String($0) }.joined(separator: ",")
+}
+
+// @swift-node:export
+func byteLength(_ bytes: UnsafeRawBufferPointer) -> Int {
+    bytes.count
+}
+`,
+    typeAssertion: `import { byteLength, describeBytes } from './dist_swift-node/index.mjs'
+
+const input: Uint8Array = new Uint8Array([1, 2, 3])
+const length: number = byteLength(input)
+const summary: string = describeBytes(input)
+void length
+void summary
+`,
+    assertion: `
+    const { byteLength, describeBytes } = await import('./dist_swift-node/index.mjs')
+    const bufferSlice = Buffer.from([99, 10, 20, 30, 77]).subarray(1, 4)
+    if (describeBytes(bufferSlice) !== '3:10,20,30') {
+      throw new Error('Buffer slice did not preserve byte offset and length')
+    }
+    const typedArraySlice = new Uint8Array([88, 4, 5, 66]).subarray(1, 3)
+    if (describeBytes(typedArraySlice) !== '2:4,5') {
+      throw new Error('Uint8Array slice did not preserve byte offset and length')
+    }
+    if (byteLength(Buffer.alloc(0)) !== 0) {
+      throw new Error('empty Buffer did not reach Swift as a zero-length view')
+    }
+    for (const invalid of [{}, [1, 2], new Uint16Array([1])]) {
+      let threw = false
+      try { byteLength(invalid) } catch { threw = true }
+      if (!threw) throw new Error('borrowed input accepted an invalid binary value: ' + invalid.constructor.name)
+    }
+  `,
+  },
+  {
     // This is a standalone consumer project, not a generator unit fixture. It
     // covers every documented transport and execution mode that currently has a
     // successful build path. The dedicated Float cases above cover the one raw

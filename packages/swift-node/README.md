@@ -115,6 +115,7 @@ These are the values that an exported function can accept or return. They are no
 | `Int`, `Int32`, `Int64`, `Double`, `Float`                          | `number`                | `Int` and `Int64` must be JavaScript-safe integers                                                    |
 | `Bool`                                                              | `boolean`               |                                                                                                       |
 | `Data`, `[UInt8]`                                                   | `Uint8Array` / `Buffer` | Top-level binary values use a binary-safe bridge                                                      |
+| `UnsafeRawBufferPointer`                                            | `Uint8Array` / `Buffer` | Input-only borrowed bytes for a synchronous export; no Base64 encoding or byte copy                   |
 | `[T]`, `Array<T>`, `[String: T]`, `Dictionary<String, T>`           | arrays and objects      | `T` must be JSON-safe; nested `Data` values become base64 strings                                     |
 | `// @swift-node:codable` `Codable` type                             | JSON-like object        | Works for structs, enums, and classes; concrete generic instances such as `Box<String>` are supported |
 | Public struct with scalar or `String` stored fields                 | plain object            | A lightweight ABI bridge; optional or unsupported fields need `Codable` instead                       |
@@ -129,16 +130,45 @@ These are the values that an exported function can accept or return. They are no
 | other global actors                             | uses the Promise bridge                                                                               |
 | `@escaping (String, Int, Bool, Double) -> Void` | accepts a one-shot JavaScript callback; `String?` is also supported for an optional callback argument |
 
+### Borrowed binary inputs
+
+Use `UnsafeRawBufferPointer` only when a synchronous native operation needs to
+read bytes without copying them. The generated Node-API wrapper passes a
+`Buffer` or `Uint8Array` view's data pointer and exact view length directly to
+Swift, including non-zero view offsets. It does not Base64-encode the input or
+allocate a `Data` value.
+
+```swift
+// @swift-node:export
+func checksum(_ bytes: UnsafeRawBufferPointer) -> Int32 {
+    bytes.bindMemory(to: UInt8.self).reduce(0) { $0 + Int32($1) }
+}
+```
+
+```ts
+checksum(Buffer.from([1, 2, 3]))
+checksum(new Uint8Array([99, 4, 5]).subarray(1))
+```
+
+This is a borrowed view, not owned Swift memory. It is valid only for the
+duration of that one export call: do not retain the pointer, capture it in a
+closure, pass it to a task, or access it after the function returns. Use `Data`
+or `[UInt8]` when bytes must outlive the call. `swift-node` rejects borrowed
+inputs on `async` functions, stream exports, non-`MainActor` global-actor
+exports, and exports with `@escaping` callbacks. `UnsafeRawBufferPointer` is
+input-only; return `Data` or `[UInt8]` instead.
+
 ## Unsupported types and signatures
 
-| Swift feature                                                             | Why                                                                                            | What to use instead                                                                     |
-| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Classes, structs, enums, variables, or constants as direct module exports | The Node module surface is generated from callable functions                                   | Expose functions; pass structured data through function parameters and returns          |
-| Unconstrained generic functions                                           | JavaScript has no runtime type argument with which to choose a Swift specialization            | Use a concrete specialization, such as `func echo(_ value: Box<String>) -> Box<String>` |
-| Overloaded exported functions                                             | JavaScript exports have one name, but Swift overloads use the same name for several signatures | Give each exported function a distinct name                                             |
-| Raw ABI structs in `async` functions                                      | Their synchronous in-memory representation cannot cross the asynchronous boundary safely       | Mark the model `Codable`                                                                |
-| `AsyncSequence` as a stream return                                        | It is a broad protocol, not one concrete runtime representation with a stable C ABI            | Return `AsyncStream<Element>` or `AsyncThrowingStream<Element, Error>`                  |
-| Arbitrary callback shapes                                                 | Callbacks must be one-shot `@escaping (...) -> Void` functions with supported argument types   | Use a supported callback or a stream                                                    |
+| Swift feature                                                                  | Why                                                                                            | What to use instead                                                                     |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Classes, structs, enums, variables, or constants as direct module exports      | The Node module surface is generated from callable functions                                   | Expose functions; pass structured data through function parameters and returns          |
+| Unconstrained generic functions                                                | JavaScript has no runtime type argument with which to choose a Swift specialization            | Use a concrete specialization, such as `func echo(_ value: Box<String>) -> Box<String>` |
+| Overloaded exported functions                                                  | JavaScript exports have one name, but Swift overloads use the same name for several signatures | Give each exported function a distinct name                                             |
+| Raw ABI structs in `async` functions                                           | Their synchronous in-memory representation cannot cross the asynchronous boundary safely       | Mark the model `Codable`                                                                |
+| `AsyncSequence` as a stream return                                             | It is a broad protocol, not one concrete runtime representation with a stable C ABI            | Return `AsyncStream<Element>` or `AsyncThrowingStream<Element, Error>`                  |
+| Arbitrary callback shapes                                                      | Callbacks must be one-shot `@escaping (...) -> Void` functions with supported argument types   | Use a supported callback or a stream                                                    |
+| `UnsafeRawBufferPointer` in an async, stream, global-actor, or callback export | The JavaScript-owned backing memory is borrowed only for the synchronous call                  | Use `Data` or `[UInt8]`                                                                 |
 
 ## Commands
 

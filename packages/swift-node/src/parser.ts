@@ -16,12 +16,14 @@ export interface SwiftParam {
   bridgeStringLengthFor?: string
   /** Generated ABI output parameter for a direct String return value. */
   bridgeStringResultLength?: boolean
+  /** Generated ABI length parameter paired with a borrowed byte input. */
+  bridgeBorrowedBufferLengthFor?: string
   /** Generated context pointer paired with a callback function pointer. */
   callbackContext?: boolean
 }
 
 /** A deliberate text transport across the Swift/C/Node boundary. */
-export type BridgeTransport = 'json' | 'data'
+export type BridgeTransport = 'json' | 'data' | 'borrowed'
 
 export interface CallbackParam {
   type: SwiftTypeCategory
@@ -52,6 +54,7 @@ export type SwiftTypeCategory =
   | 'bool'
   | 'string'
   | 'buffer'
+  | 'borrowed-buffer'
   | 'void'
   | 'callback'
   | 'unknown'
@@ -93,6 +96,7 @@ export function classifyNativeSwiftType(type: string): SwiftTypeCategory {
   if (base === 'Bool') return 'bool'
   if (base === 'String') return 'string'
   if (base === 'Data' || base === '[UInt8]') return 'buffer'
+  if (base === 'UnsafeRawBufferPointer') return 'borrowed-buffer'
   if (base === 'Void' || base === '()') return 'void'
   if (isEscapingCallback(t)) return 'callback'
   return 'unknown'
@@ -549,6 +553,9 @@ export function bridgeTransportForType(
   const codableTypes = new Set(codableTypeNames)
   const base = unwrapOptional(type)
   const optional = normalizedType(type).endsWith('?')
+  // Deliberately narrow, borrowed input-only transport. Unlike Data, this
+  // pointer aliases Node-owned memory for the duration of a synchronous call.
+  if (base === 'UnsafeRawBufferPointer' && !optional) return 'borrowed'
   if ((base === 'Data' || base === '[UInt8]') && !optional) return 'data'
   if (!isJsonValueType(type, codableTypes)) return null
 
