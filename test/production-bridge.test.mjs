@@ -251,6 +251,119 @@ func notifyLater(_ value: Int, _ callback: @escaping (Int) -> Void) {
   `,
   },
   {
+    name: 'borrowed-buffer-input',
+    source: `import Foundation
+
+// @swift-node:export
+func describeBytes(_ bytes: UnsafeRawBufferPointer) -> String {
+    let values = bytes.bindMemory(to: UInt8.self)
+    return "\\(bytes.count):" + values.map { String($0) }.joined(separator: ",")
+}
+
+// @swift-node:export
+func byteLength(_ bytes: UnsafeRawBufferPointer) -> Int {
+    bytes.count
+}
+
+// @swift-node:export
+@MainActor
+func mainActorByteLength(_ offset: Int, _ bytes: UnsafeRawBufferPointer) -> Int {
+    offset + bytes.count
+}
+
+// @swift-node:export
+func combinedByteLength(
+    _ first: UnsafeRawBufferPointer,
+    _ second: UnsafeRawBufferPointer
+) -> Int {
+    first.count + second.count
+}
+
+// @swift-node:export
+func taggedByteLength(_ bytes: UnsafeRawBufferPointer, _ cleanup_args: String) -> Int {
+    bytes.count + cleanup_args.utf8.count
+}
+
+// @swift-node:export
+func copiedBytes(_ bytes: UnsafeRawBufferPointer) -> Data {
+    Data(bytes)
+}
+
+enum BorrowedFailure: Error {
+    case empty
+}
+
+// @swift-node:export
+func firstByte(_ bytes: UnsafeRawBufferPointer) throws -> Int {
+    guard let first = bytes.bindMemory(to: UInt8.self).first else {
+        throw BorrowedFailure.empty
+    }
+    return Int(first)
+}
+`,
+    typeAssertion: `import { byteLength, combinedByteLength, copiedBytes, describeBytes, firstByte, mainActorByteLength, taggedByteLength } from './dist_swift-node/index.mjs'
+
+const input: Uint8Array = new Uint8Array([1, 2, 3])
+const length: number = byteLength(input)
+const summary: string = describeBytes(input)
+const combined: number = combinedByteLength(input, input)
+const first: number = firstByte(input)
+const mainActorLength: number = mainActorByteLength(1, input)
+const copied: Uint8Array = copiedBytes(input)
+const tagged: number = taggedByteLength(input, 'tag')
+void length
+void summary
+void combined
+void first
+void mainActorLength
+void copied
+void tagged
+`,
+    assertion: `
+    const { byteLength, combinedByteLength, copiedBytes, describeBytes, firstByte, mainActorByteLength, taggedByteLength } = await import('./dist_swift-node/index.mjs')
+    const bufferSlice = Buffer.from([99, 10, 20, 30, 77]).subarray(1, 4)
+    if (describeBytes(bufferSlice) !== '3:10,20,30') {
+      throw new Error('Buffer slice did not preserve byte offset and length')
+    }
+    const typedArraySlice = new Uint8Array([88, 4, 5, 66]).subarray(1, 3)
+    if (describeBytes(typedArraySlice) !== '2:4,5') {
+      throw new Error('Uint8Array slice did not preserve byte offset and length')
+    }
+    if (byteLength(Buffer.alloc(0)) !== 0) {
+      throw new Error('empty Buffer did not reach Swift as a zero-length view')
+    }
+    if (mainActorByteLength(40, typedArraySlice) !== 42) {
+      throw new Error('MainActor borrowed-buffer call did not preserve its other argument')
+    }
+    if (combinedByteLength(bufferSlice, typedArraySlice) !== 5) {
+      throw new Error('multiple borrowed-buffer arguments did not preserve their independent views')
+    }
+    if (taggedByteLength(typedArraySlice, 'tag') !== 5) {
+      throw new Error('borrowed-buffer call with a string input did not preserve both arguments')
+    }
+    if (Buffer.from(copiedBytes(typedArraySlice)).toString('hex') !== '0405') {
+      throw new Error('borrowed-buffer Data return did not compile and round-trip its bytes')
+    }
+    if (copiedBytes(new Uint8Array(0)).byteLength !== 0) {
+      throw new Error('empty borrowed-buffer Data return did not round-trip as an empty Uint8Array')
+    }
+    if (firstByte(typedArraySlice) !== 4) {
+      throw new Error('throwing borrowed-buffer call did not read the first byte')
+    }
+    let emptyThrow = false
+    try { firstByte(new Uint8Array(0)) } catch { emptyThrow = true }
+    if (!emptyThrow) throw new Error('throwing borrowed-buffer call accepted an empty view')
+    const shared = new SharedArrayBuffer(2)
+    const spoofedSharedView = new Uint8Array(shared)
+    Object.defineProperty(spoofedSharedView, 'buffer', { value: new ArrayBuffer(2) })
+    for (const invalid of [{}, [1, 2], new ArrayBuffer(1), new DataView(new ArrayBuffer(1)), new Uint16Array([1]), new Uint8Array(shared), Buffer.from(shared), spoofedSharedView]) {
+      let threw = false
+      try { byteLength(invalid) } catch { threw = true }
+      if (!threw) throw new Error('borrowed input accepted an invalid binary value: ' + invalid.constructor.name)
+    }
+  `,
+  },
+  {
     // This is a standalone consumer project, not a generator unit fixture. It
     // covers every documented transport and execution mode that currently has a
     // successful build path. The dedicated Float cases above cover the one raw

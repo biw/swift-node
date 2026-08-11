@@ -125,7 +125,7 @@ const cppKeywords = new Set([
   'xor_eq',
 ])
 
-function cppIdentifier(name: string): string {
+export function cppIdentifier(name: string): string {
   const identifier = sanitizeId(name)
   return cppKeywords.has(identifier) ? `_swift_node_${identifier}` : identifier
 }
@@ -143,6 +143,7 @@ function jsName(symbolName: string, moduleName: string): string {
 // --- C++ type mapping ---
 
 function cppType(swiftType: string): string {
+  if (swiftType === 'UnsafeRawPointer' || swiftType === 'UnsafeRawPointer?') return 'const void*'
   const cat = classifySwiftType(swiftType)
   switch (cat) {
     case 'int32':
@@ -266,6 +267,7 @@ function tsTypeFromNative(swiftType: string, dataAsBase64 = false): string {
   }
   if (baseType === 'Data')
     return `${dataAsBase64 ? 'string' : 'Uint8Array'}${nullable ? ' | null' : ''}`
+  if (baseType === 'UnsafeRawBufferPointer') return 'Uint8Array'
   const cat = classifyNativeSwiftType(swiftType)
   const base = (() => {
     switch (cat) {
@@ -293,7 +295,7 @@ function tsTypeFromNative(swiftType: string, dataAsBase64 = false): string {
 }
 
 function tsParamType(param: SwiftParam): string {
-  if (param.transport === 'data') return 'Uint8Array'
+  if (param.transport === 'data' || param.transport === 'borrowed') return 'Uint8Array'
   return param.nativeType
     ? tsTypeFromNative(param.nativeType, param.transport === 'json')
     : tsType(param.type)
@@ -342,6 +344,7 @@ function jsParams(fn: SwiftFunction): SwiftParam[] {
       !p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>') &&
       !p.bridgeStringLengthFor &&
       !p.bridgeStringResultLength &&
+      !p.bridgeBorrowedBufferLengthFor &&
       !p.callbackContext,
   )
 }
@@ -770,7 +773,12 @@ function generateSyncWrapper(fn: SwiftFunction, structs: SwiftStruct[] = []): st
     )
     lines.push(`    if (!swift_node_expect_argc(env, argc, ${jsP.length})) return nullptr;`)
     lines.push('')
-    generateArgConversions(lines, jsP, structs, cleanupInputs ? 'cleanup_args' : undefined)
+    generateArgConversions(
+      lines,
+      jsP,
+      structs,
+      cleanupInputs ? 'swift_node_cleanup_args' : undefined,
+    )
     lines.push('')
   } else {
     lines.push(
@@ -787,6 +795,8 @@ function generateSyncWrapper(fn: SwiftFunction, structs: SwiftStruct[] = []): st
       if (p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>')) return '&swift_error'
       if (p.bridgeStringLengthFor) return `${cppIdentifier(p.bridgeStringLengthFor)}_len`
       if (p.bridgeStringResultLength) return '&result_len'
+      if (p.bridgeBorrowedBufferLengthFor)
+        return `static_cast<int64_t>(${cppIdentifier(p.bridgeBorrowedBufferLengthFor)}_len)`
       return cppIdentifier(p.name)
     })
     .join(', ')
@@ -805,7 +815,7 @@ function generateSyncWrapper(fn: SwiftFunction, structs: SwiftStruct[] = []): st
 
   // Free string input buffers and struct string fields
   if (cleanupInputs) {
-    lines.push('    cleanup_args();')
+    lines.push('    swift_node_cleanup_args();')
   } else {
     for (const p of jsP) {
       const name = cppIdentifier(p.name)
@@ -960,9 +970,9 @@ function generateAsyncWrapper(fn: SwiftFunction): string {
           break
         }
         if (fn.returnTransport === 'data') {
-          lines.push('    std::vector<uint8_t> bytes;')
+          lines.push('    std::vector<uint8_t> swift_node_result_bytes;')
           lines.push(
-            '    result_ok = swift_node_base64_decode(ctx->result, &bytes) && swift_node_napi_ok(env, napi_create_buffer_copy(env, bytes.size(), bytes.data(), nullptr, &js_result), "Failed to create Data return buffer");',
+            '    result_ok = swift_node_base64_decode(ctx->result, &swift_node_result_bytes) && swift_node_napi_ok(env, napi_create_buffer_copy(env, swift_node_result_bytes.size(), swift_node_result_bytes.data(), nullptr, &js_result), "Failed to create Data return buffer");',
           )
           lines.push('    free(const_cast<char*>(ctx->result));')
           break
@@ -1389,6 +1399,11 @@ function needsInputCleanup(p: SwiftParam, structs: SwiftStruct[]): boolean {
 
 function declareArgLocal(lines: string[], p: SwiftParam, structs: SwiftStruct[]): void {
   const name = cppIdentifier(p.name)
+  if (p.transport === 'borrowed') {
+    lines.push(`    void* ${name} = nullptr;`)
+    lines.push(`    size_t ${name}_len = 0;`)
+    return
+  }
   const structDef = findStruct(p.type, structs)
   if (structDef) {
     lines.push(`    swift_node_${structDef.name} ${name}{};`)
@@ -1569,6 +1584,22 @@ function generateArgConversions(
       lines.push(`    memcpy(${name}, ${name}_base64.c_str(), ${name}_base64.size() + 1);`)
       continue
     }
+    if (p.transport === 'borrowed') {
+      if (!cleanupName) {
+        lines.push(`    void* ${name} = nullptr;`)
+        lines.push(`    size_t ${name}_len = 0;`)
+      }
+      lines.push(
+        `    if (!swift_node_is_buffer_or_typedarray(env, argv[${i}], "Expected argument '${p.name}' to be a Uint8Array or Buffer")) ${fail}`,
+      )
+      lines.push(
+        `    if (!swift_node_get_borrowed_binary_data(env, argv[${i}], &${name}, &${name}_len)) ${fail}`,
+      )
+      lines.push(
+        `    if (${name}_len > static_cast<size_t>(std::numeric_limits<int64_t>::max())) { napi_throw_range_error(env, nullptr, "Borrowed buffer is too large"); ${fail} }`,
+      )
+      continue
+    }
     switch (cat) {
       case 'int32':
         lines.push(
@@ -1665,13 +1696,13 @@ function generateReturnConversion(
   }
   if (transport === 'data') {
     lines.push('    AutoFreeStr guard(result);')
-    lines.push('    std::vector<uint8_t> bytes;')
+    lines.push('    std::vector<uint8_t> swift_node_result_bytes;')
     lines.push(
-      '    if (!swift_node_base64_decode(result, &bytes)) return swift_node_throw_type_error(env, "Native Data return is not valid base64");',
+      '    if (!swift_node_base64_decode(result, &swift_node_result_bytes)) return swift_node_throw_type_error(env, "Native Data return is not valid base64");',
     )
     lines.push('    napi_value js_result;')
     lines.push(
-      '    if (!swift_node_napi_ok(env, napi_create_buffer_copy(env, bytes.size(), bytes.data(), nullptr, &js_result), "Failed to create Data return buffer")) return nullptr;',
+      '    if (!swift_node_napi_ok(env, napi_create_buffer_copy(env, swift_node_result_bytes.size(), swift_node_result_bytes.data(), nullptr, &js_result), "Failed to create Data return buffer")) return nullptr;',
     )
     lines.push('    return js_result;')
     return
@@ -2356,6 +2387,7 @@ function generateSingleWrapper(
   const cdeclParams: string[] = fn.params.map((p) => {
     const cat = classifyNativeSwiftType(p.type)
     const transport = paramTransports.get(p.name)
+    if (transport === 'borrowed') return `_ ${p.name}: UnsafeRawPointer?, _ ${p.name}Len: Int`
     if (transport) return `_ ${p.name}: UnsafePointer<CChar>`
     if (cat === 'callback') {
       const cleaned = p.type.replace(/@escaping\s+/g, '').trim()
@@ -2418,7 +2450,11 @@ function generateSingleWrapper(
     const cat = classifyNativeSwiftType(p.type)
     const pStruct = findStruct(p.type, structs)
     const transport = paramTransports.get(p.name)
-    if (transport === 'json') {
+    if (transport === 'borrowed') {
+      lines.push(
+        `    let swift_${p.name} = UnsafeRawBufferPointer(start: ${p.name}, count: ${p.name}Len)`,
+      )
+    } else if (transport === 'json') {
       lines.push(`    let swift_${p.name}: ${p.type}`)
       lines.push('    do {')
       lines.push(
@@ -2668,6 +2704,21 @@ export function exportedToSwiftFunctions(
     const params: SwiftParam[] = fn.params.flatMap<SwiftParam>((p) => {
       const cat = classifyNativeSwiftType(p.type)
       const transport = generatedTransport(p.type, codableTypes)
+      if (transport === 'borrowed') {
+        return [
+          {
+            name: p.name,
+            type: 'UnsafeRawPointer?',
+            nativeType: p.type,
+            transport,
+          },
+          {
+            name: `${p.name}Len`,
+            type: 'Int',
+            bridgeBorrowedBufferLengthFor: p.name,
+          },
+        ]
+      }
       if (transport) {
         return [
           {

@@ -362,6 +362,34 @@ describe('generateAddonCpp', () => {
     expect(cpp).toContain('AutoFreeStr guard(result)')
   })
 
+  it('passes borrowed bytes directly to the C bridge without a base64 copy', () => {
+    const exported: ExportedFunction = {
+      name: 'describeBytes',
+      params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }],
+      returnType: 'String',
+      throws: false,
+      isAsync: false,
+      line: 1,
+    }
+    const [fn] = exportedToSwiftFunctions([exported], 'test')
+    const header = generateBridgeH([fn], 'test')
+    const body = extractFnBody(
+      generateAddonCpp([fn], 'test'),
+      'static napi_value js_test_describeBytes',
+    )
+
+    expect(header).toContain(
+      'char* test_describeBytes(const void* bytes, int64_t bytesLen, int64_t* outResultLen, const char** out_error);',
+    )
+    expect(body).toContain('swift_node_get_borrowed_binary_data(env, argv[0], &bytes, &bytes_len)')
+    expect(body).toContain('Borrowed buffer is too large')
+    expect(body).toContain(
+      'test_describeBytes(bytes, static_cast<int64_t>(bytes_len), &result_len, &swift_error)',
+    )
+    expect(body).not.toContain('swift_node_base64_encode')
+    expect(body).not.toContain('_base64')
+  })
+
   it('generates null check for nullable string returns', () => {
     const cpp = generateAddonCpp([nullableGetFn], 'test')
     expect(cpp).toContain('if (!result)')
@@ -708,10 +736,10 @@ describe('generateAddonCpp', () => {
       isAsync: false,
     }
     const body = extractFnBody(generateAddonCpp([fn], 'test'), 'static napi_value js_Mod_repeat')
-    expect(body).toContain('auto cleanup_args = [&]()')
+    expect(body).toContain('auto swift_node_cleanup_args = [&]()')
     expect(body).toContain('delete[] value')
     expect(body).toContain("Expected argument 'count' to be a number")
-    expect(body).toContain('cleanup_args(); return nullptr;')
+    expect(body).toContain('swift_node_cleanup_args(); return nullptr;')
   })
 
   // Struct tests
@@ -775,6 +803,22 @@ describe('generateDts', () => {
     expect(dts).toContain('bytes: Uint8Array')
     expect(dts).toContain('Promise<Record<string, number>>')
     expect(dts).toContain('export { __swift_node_0 as process }')
+  })
+
+  it('uses Uint8Array for borrowed byte inputs without exposing its ABI length', () => {
+    const exported: ExportedFunction = {
+      name: 'byteLength',
+      params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }],
+      returnType: 'Int',
+      throws: false,
+      isAsync: false,
+      line: 1,
+    }
+    const [fn] = exportedToSwiftFunctions([exported], 'test')
+    const dts = generateDts([fn], 'test')
+
+    expect(dts).toContain('bytes: Uint8Array')
+    expect(dts).not.toContain('bytesLen')
   })
 
   it.each(['[String?]', 'Array<String?>'])(
@@ -1102,6 +1146,26 @@ describe('generateWrappersSwift', () => {
     expect(output).toContain('Data(base64Encoded: String(cString: input))')
     expect(output).toContain('asyncResult = await reverse(swift_input)')
     expect(output).toContain('result.base64EncodedString()')
+  })
+
+  it('constructs a synchronous UnsafeRawBufferPointer view without decoding base64', () => {
+    const fn: ExportedFunction = {
+      name: 'byteLength',
+      params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }],
+      returnType: 'Int',
+      throws: false,
+      isAsync: false,
+      line: 1,
+    }
+    const output = generateWrappersSwift([fn], 'models')
+
+    expect(output).toContain(
+      'public func _sn_models_byteLength(_ bytes: UnsafeRawPointer?, _ bytesLen: Int, _ out_error: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Int {',
+    )
+    expect(output).toContain(
+      'let swift_bytes = UnsafeRawBufferPointer(start: bytes, count: bytesLen)',
+    )
+    expect(output).not.toContain('Data(base64Encoded: String(cString: bytes))')
   })
 
   it('uses Codable JSON transport when a matching native struct is available', () => {
@@ -1473,6 +1537,29 @@ describe('exportedToSwiftFunctions', () => {
     expect(cdecl.nativeReturnType).toBe('Data')
     expect(cdecl.returnTransport).toBe('data')
     expect(cdecl.isAsync).toBe(true)
+  })
+
+  it('uses a raw pointer and generated length only for borrowed byte inputs', () => {
+    const fn: ExportedFunction = {
+      name: 'byteLength',
+      params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }],
+      returnType: 'Int',
+      throws: false,
+      isAsync: false,
+      line: 1,
+    }
+    const [cdecl] = exportedToSwiftFunctions([fn], 'models')
+
+    expect(cdecl.params).toEqual([
+      {
+        name: 'bytes',
+        type: 'UnsafeRawPointer?',
+        nativeType: 'UnsafeRawBufferPointer',
+        transport: 'borrowed',
+      },
+      { name: 'bytesLen', type: 'Int', bridgeBorrowedBufferLengthFor: 'bytes' },
+      { name: 'outError', type: 'UnsafeMutablePointer<UnsafePointer<CChar>?>' },
+    ])
   })
 
   it('converts exported function to SwiftFunction with C-compatible types', () => {

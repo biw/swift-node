@@ -16,12 +16,14 @@ export interface SwiftParam {
   bridgeStringLengthFor?: string
   /** Generated ABI output parameter for a direct String return value. */
   bridgeStringResultLength?: boolean
+  /** Generated ABI length parameter paired with a borrowed byte input. */
+  bridgeBorrowedBufferLengthFor?: string
   /** Generated context pointer paired with a callback function pointer. */
   callbackContext?: boolean
 }
 
 /** A deliberate text transport across the Swift/C/Node boundary. */
-export type BridgeTransport = 'json' | 'data'
+export type BridgeTransport = 'json' | 'data' | 'borrowed'
 
 export interface CallbackParam {
   type: SwiftTypeCategory
@@ -52,6 +54,7 @@ export type SwiftTypeCategory =
   | 'bool'
   | 'string'
   | 'buffer'
+  | 'borrowed-buffer'
   | 'void'
   | 'callback'
   | 'unknown'
@@ -93,6 +96,7 @@ export function classifyNativeSwiftType(type: string): SwiftTypeCategory {
   if (base === 'Bool') return 'bool'
   if (base === 'String') return 'string'
   if (base === 'Data' || base === '[UInt8]') return 'buffer'
+  if (base === 'UnsafeRawBufferPointer') return 'borrowed-buffer'
   if (base === 'Void' || base === '()') return 'void'
   if (isEscapingCallback(t)) return 'callback'
   return 'unknown'
@@ -161,7 +165,13 @@ function classifyStructFieldType(type: string): SwiftTypeCategory {
   if (t.endsWith('?') || /^Optional\s*</.test(t)) return 'unknown'
 
   const native = classifyNativeSwiftType(t)
-  if (native !== 'unknown' && native !== 'callback' && native !== 'buffer' && native !== 'void') {
+  if (
+    native !== 'unknown' &&
+    native !== 'callback' &&
+    native !== 'buffer' &&
+    native !== 'borrowed-buffer' &&
+    native !== 'void'
+  ) {
     return native
   }
 
@@ -170,6 +180,7 @@ function classifyStructFieldType(type: string): SwiftTypeCategory {
     cInterop !== 'unknown' &&
     cInterop !== 'callback' &&
     cInterop !== 'buffer' &&
+    cInterop !== 'borrowed-buffer' &&
     cInterop !== 'void'
   ) {
     return cInterop
@@ -269,6 +280,12 @@ export interface ExportedFunction {
   isAsync: boolean
   /** The global actor annotation applied to the exported declaration, if any. */
   actorIsolation?: string
+  /**
+   * Declaration attributes on a borrowed-buffer export that source inspection
+   * cannot prove are non-isolating. They must be rejected rather than risk
+   * passing JavaScript-owned memory across an actor hop.
+   */
+  unrecognizedBorrowedAttributes?: string[]
   /** Set by `// @swift-node:stream`. */
   isStream?: boolean
   line: number // 1-based line number for error reporting
@@ -285,9 +302,65 @@ export interface SwiftCodableType {
   line: number
 }
 
+/** Extract source-declared global actor names so callers can combine every Swift file. */
+export function parseSwiftGlobalActorNames(source: string): Set<string> {
+  const names = new Set<string>()
+  const pattern =
+    /@globalActor\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:public|internal|private|fileprivate|final|open)\s+)*(?:actor|struct|class|enum)\s+(\w+)/g
+  for (const match of source.matchAll(pattern)) {
+    names.add(match[1])
+  }
+  return names
+}
+
+function parseDeclarationAttributeNames(annotations: string[]): string[] {
+  const names: string[] = []
+
+  for (const annotation of annotations) {
+    const line = annotation.trim()
+    let index = 0
+
+    while (line[index] === '@') {
+      const match = line.slice(index).match(/^@((?:\w+\.)*\w+)/)
+      if (!match) break
+      names.push(match[1])
+      index += match[0].length
+
+      while (/\s/.test(line[index] ?? '')) index++
+      if (line[index] !== '(') continue
+
+      let depth = 0
+      let quote: '"' | "'" | undefined
+      for (; index < line.length; index++) {
+        const character = line[index]
+        if (quote) {
+          if (character === '\\') index++
+          else if (character === quote) quote = undefined
+          continue
+        }
+        if (character === '"' || character === "'") {
+          quote = character
+        } else if (character === '(') {
+          depth++
+        } else if (character === ')' && --depth === 0) {
+          index++
+          break
+        }
+      }
+
+      while (/\s/.test(line[index] ?? '')) index++
+    }
+  }
+
+  return names
+}
+
 // Parse // @swift-node:export annotated functions from Swift source.
 // Skips attributes (@available, @MainActor, etc.) between annotation and func.
-export function parseExportedFunctions(source: string): ExportedFunction[] {
+export function parseExportedFunctions(
+  source: string,
+  globalActorNames = parseSwiftGlobalActorNames(source),
+): ExportedFunction[] {
   const functions: ExportedFunction[] = []
   const lines = source.split('\n')
 
@@ -337,9 +410,46 @@ export function parseExportedFunctions(source: string): ExportedFunction[] {
     const isStream = annotations.some((candidate) =>
       /^\s*\/\/\s*@swift-node:stream\s*$/.test(candidate),
     )
-    const actorIsolation = annotations
-      .map((candidate) => candidate.trim().match(/^@(\w*Actor)$/)?.[1])
-      .find(Boolean)
+    const hasBorrowedInput = params.some(
+      (parameter) => classifyNativeSwiftType(parameter.type) === 'borrowed-buffer',
+    )
+    const attributeNames = parseDeclarationAttributeNames(annotations)
+    const actorAttribute = attributeNames.find((candidate) => {
+      const shortName = candidate?.split('.').at(-1)
+      return (
+        candidate === 'MainActor' ||
+        candidate?.endsWith('Actor') ||
+        globalActorNames.has(candidate ?? '') ||
+        globalActorNames.has(shortName ?? '')
+      )
+    })
+    // The standard actor can be explicitly qualified from its defining module.
+    // Keep the generated wrapper on its known synchronous MainActor path.
+    const actorIsolation =
+      actorAttribute === '_Concurrency.MainActor' ? 'MainActor' : actorAttribute
+    // A source-only parser cannot distinguish an imported global actor from an
+    // attached macro. For borrowed views, retain those attributes for the
+    // validator to reject explicitly instead of guessing that they are actors
+    // (which produced misleading errors for macros) or ignoring a possible
+    // actor hop (which could outlive the JS-owned view).
+    const unrecognizedBorrowedAttributes = hasBorrowedInput
+      ? attributeNames.filter(
+          (attribute) =>
+            attribute !== actorAttribute &&
+            !new Set([
+              'available',
+              'discardableResult',
+              'inlinable',
+              'usableFromInline',
+              '_transparent',
+              '_alwaysEmitIntoClient',
+              '_spi',
+              'preconcurrency',
+              'objc',
+              'nonobjc',
+            ]).has(attribute),
+        )
+      : []
 
     functions.push({
       name,
@@ -348,6 +458,7 @@ export function parseExportedFunctions(source: string): ExportedFunction[] {
       throws: throws_,
       isAsync,
       ...(actorIsolation ? { actorIsolation } : {}),
+      ...(unrecognizedBorrowedAttributes.length > 0 ? { unrecognizedBorrowedAttributes } : {}),
       ...(isStream ? { isStream: true } : {}),
       line: i + 1, // 1-based
     })
@@ -549,6 +660,9 @@ export function bridgeTransportForType(
   const codableTypes = new Set(codableTypeNames)
   const base = unwrapOptional(type)
   const optional = normalizedType(type).endsWith('?')
+  // Deliberately narrow, borrowed input-only transport. Unlike Data, this
+  // pointer aliases Node-owned memory for the duration of a synchronous call.
+  if (base === 'UnsafeRawBufferPointer' && !optional) return 'borrowed'
   if ((base === 'Data' || base === '[UInt8]') && !optional) return 'data'
   if (!isJsonValueType(type, codableTypes)) return null
 
