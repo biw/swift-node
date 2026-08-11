@@ -67,20 +67,27 @@ describe('tsdown initialization', () => {
       )}`
       writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n')
 
-      execFileSync(command, ['--dir', packageDir, 'build'], { cwd: repoDir, stdio: 'inherit' })
+      const packageManagerOptions = {
+        cwd: repoDir,
+        stdio: 'inherit' as const,
+        shell: process.platform === 'win32',
+      }
+      execFileSync(command, ['--dir', packageDir, 'build'], packageManagerOptions)
       execFileSync(
         command,
         ['--dir', path.join(repoDir, 'packages', 'swift-node-unplugin'), 'build'],
-        {
-          cwd: repoDir,
-          stdio: 'inherit',
-        },
+        packageManagerOptions,
       )
       execFileSync(npmCommand, ['install', '--ignore-scripts'], {
         cwd: projectDir,
         stdio: 'inherit',
+        shell: process.platform === 'win32',
       })
-      execFileSync(npmCommand, ['run', 'build'], { cwd: projectDir, stdio: 'inherit' })
+      execFileSync(npmCommand, ['run', 'build'], {
+        cwd: projectDir,
+        stdio: 'inherit',
+        shell: process.platform === 'win32',
+      })
 
       expect(existsSync(path.join(projectDir, 'dist', 'index.d.ts'))).toBe(true)
       expect(existsSync(path.join(projectDir, 'dist', 'index.d.cts'))).toBe(true)
