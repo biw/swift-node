@@ -502,6 +502,19 @@ func updateTitle(_ title: String) -> String {
     expect(fns[0].actorIsolation).toBe('MainActor')
   })
 
+  it('normalizes the module-qualified standard MainActor annotation', () => {
+    const source = `
+// @swift-node:export
+@_Concurrency.MainActor
+func updateTitle(_ title: String) -> String {
+    title
+}
+`
+    const fns = parseExportedFunctions(source)
+    expect(fns).toHaveLength(1)
+    expect(fns[0].actorIsolation).toBe('MainActor')
+  })
+
   it('records a source-local custom global actor annotation for an exported function', () => {
     const source = `
 actor Executor {}

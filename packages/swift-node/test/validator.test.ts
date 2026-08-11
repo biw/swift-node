@@ -868,6 +868,18 @@ func digest(_ \`class\`: UnsafeRawBufferPointer, _ \`struct\`: Int) -> Int { 0 }
         validateExports([fn], '// @swift-node:export\n@MainActor\nfunc mainBytes() {}'),
       ).toHaveLength(0)
     })
+
+    it('allows borrowed buffers on a module-qualified MainActor export', () => {
+      const source = `
+// @swift-node:export
+@_Concurrency.MainActor
+func mainBytes(_ bytes: UnsafeRawBufferPointer) {}
+`
+      const exported = parseExportedFunctions(source)
+
+      expect(exported[0].actorIsolation).toBe('MainActor')
+      expect(validateExports(exported, source)).toHaveLength(0)
+    })
   })
 
   describe('callback signatures', () => {

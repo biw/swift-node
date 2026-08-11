@@ -414,7 +414,7 @@ export function parseExportedFunctions(
       (parameter) => classifyNativeSwiftType(parameter.type) === 'borrowed-buffer',
     )
     const attributeNames = parseDeclarationAttributeNames(annotations)
-    const actorIsolation = attributeNames.find((candidate) => {
+    const actorAttribute = attributeNames.find((candidate) => {
       const shortName = candidate?.split('.').at(-1)
       return (
         candidate === 'MainActor' ||
@@ -423,6 +423,10 @@ export function parseExportedFunctions(
         globalActorNames.has(shortName ?? '')
       )
     })
+    // The standard actor can be explicitly qualified from its defining module.
+    // Keep the generated wrapper on its known synchronous MainActor path.
+    const actorIsolation =
+      actorAttribute === '_Concurrency.MainActor' ? 'MainActor' : actorAttribute
     // A source-only parser cannot distinguish an imported global actor from an
     // attached macro. For borrowed views, retain those attributes for the
     // validator to reject explicitly instead of guessing that they are actors
@@ -431,7 +435,7 @@ export function parseExportedFunctions(
     const unrecognizedBorrowedAttributes = hasBorrowedInput
       ? attributeNames.filter(
           (attribute) =>
-            attribute !== actorIsolation &&
+            attribute !== actorAttribute &&
             !new Set([
               'available',
               'discardableResult',
