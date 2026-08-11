@@ -13,6 +13,7 @@ import {
   parseSwiftStreamReturnType,
   splitParams,
 } from './parser.js'
+import { cppIdentifier } from './generator.js'
 
 export interface ValidationError {
   message: string
@@ -155,6 +156,25 @@ function validateBorrowedBufferRestrictions(
         severity: 'error',
       })
     }
+    for (const parameter of borrowedParams) {
+      const generatedSwiftLengthName = `${parameter.name}Len`
+      const generatedCppAbiLengthName = cppIdentifier(generatedSwiftLengthName)
+      const generatedCppLengthName = `${cppIdentifier(parameter.name)}_len`
+      for (const candidate of fn.params) {
+        if (
+          candidate !== parameter &&
+          (candidate.name === generatedSwiftLengthName ||
+            cppIdentifier(candidate.name) === generatedCppAbiLengthName ||
+            cppIdentifier(candidate.name) === generatedCppLengthName)
+        ) {
+          errors.push({
+            message: `Export function '${fn.name}' parameter '${candidate.name}' conflicts with generated length naming for borrowed UnsafeRawBufferPointer '${parameter.name}'. Rename the source parameter.`,
+            line: fn.line,
+            severity: 'error',
+          })
+        }
+      }
+    }
   }
 
   return errors
@@ -290,6 +310,7 @@ function validateStreams(
     if (
       (elementCategory === 'unknown' && transport !== 'json') ||
       (elementCategory === 'buffer' && transport !== 'json') ||
+      elementCategory === 'borrowed-buffer' ||
       elementCategory === 'callback' ||
       elementCategory === 'void'
     ) {
@@ -352,7 +373,12 @@ function validateCallbackSignatures(exported: ExportedFunction[]): ValidationErr
           continue
         }
         const cat = classifyNativeSwiftType(callbackType)
-        if (cat === 'unknown' || cat === 'buffer' || cat === 'callback') {
+        if (
+          cat === 'unknown' ||
+          cat === 'buffer' ||
+          cat === 'borrowed-buffer' ||
+          cat === 'callback'
+        ) {
           errors.push({
             message: `Callback parameter '${p.name}' in export function '${fn.name}' uses unsupported callback argument type '${callbackType}'.`,
             line: fn.line,

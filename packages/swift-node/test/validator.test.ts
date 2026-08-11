@@ -403,6 +403,41 @@ struct Payload: Codable {
       ).toBe(true)
     })
 
+    it('rejects borrowed buffers as stream elements', () => {
+      const fn = makeExported({
+        name: 'streamBytes',
+        isStream: true,
+        returnType: 'AsyncStream<UnsafeRawBufferPointer>',
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:stream\n// @swift-node:export\nfunc streamBytes() -> AsyncStream<UnsafeRawBufferPointer> { fatalError() }',
+      )
+      expect(errors.some((error) => error.message.includes('unsupported element type'))).toBe(true)
+    })
+
+    it('rejects generated borrowed-buffer length name collisions', () => {
+      const fn = makeExported({
+        name: 'digest',
+        params: [
+          { label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: 'bytesLen', type: 'Int' },
+          { label: '_', name: 'bytes_len', type: 'Int' },
+          { label: '_', name: 'friend', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: '_swift_node_friend_len', type: 'Int' },
+          { label: '_', name: 'é', type: 'UnsafeRawBufferPointer' },
+          { label: '_', name: '_Len', type: 'Int' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc digest(_ bytes: UnsafeRawBufferPointer, _ bytesLen: Int, _ bytes_len: Int, _ friend: UnsafeRawBufferPointer, _ _swift_node_friend_len: Int, _ é: UnsafeRawBufferPointer, _ _Len: Int) {}',
+      )
+      expect(
+        errors.filter((error) => error.message.includes('conflicts with generated length naming')),
+      ).toHaveLength(4)
+    })
+
     it('allows borrowed buffers in synchronous MainActor exports', () => {
       const fn = makeExported({
         name: 'mainBytes',
@@ -416,6 +451,21 @@ struct Payload: Codable {
   })
 
   describe('callback signatures', () => {
+    it('rejects borrowed buffer callback arguments', () => {
+      const fn = makeExported({
+        params: [
+          { label: '_', name: 'callback', type: '@escaping (UnsafeRawBufferPointer) -> Void' },
+        ],
+      })
+      const errors = validateExports(
+        [fn],
+        '// @swift-node:export\nfunc testFunc(_ callback: @escaping (UnsafeRawBufferPointer) -> Void) {}',
+      )
+      expect(
+        errors.some((error) => error.message.includes('unsupported callback argument type')),
+      ).toBe(true)
+    })
+
     it('accepts optional String callback arguments', () => {
       const fn = makeExported({
         params: [{ label: '_', name: 'callback', type: '@escaping (String?) -> Void' }],

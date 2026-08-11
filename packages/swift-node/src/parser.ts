@@ -165,7 +165,13 @@ function classifyStructFieldType(type: string): SwiftTypeCategory {
   if (t.endsWith('?') || /^Optional\s*</.test(t)) return 'unknown'
 
   const native = classifyNativeSwiftType(t)
-  if (native !== 'unknown' && native !== 'callback' && native !== 'buffer' && native !== 'void') {
+  if (
+    native !== 'unknown' &&
+    native !== 'callback' &&
+    native !== 'buffer' &&
+    native !== 'borrowed-buffer' &&
+    native !== 'void'
+  ) {
     return native
   }
 
@@ -174,6 +180,7 @@ function classifyStructFieldType(type: string): SwiftTypeCategory {
     cInterop !== 'unknown' &&
     cInterop !== 'callback' &&
     cInterop !== 'buffer' &&
+    cInterop !== 'borrowed-buffer' &&
     cInterop !== 'void'
   ) {
     return cInterop

@@ -125,7 +125,7 @@ const cppKeywords = new Set([
   'xor_eq',
 ])
 
-function cppIdentifier(name: string): string {
+export function cppIdentifier(name: string): string {
   const identifier = sanitizeId(name)
   return cppKeywords.has(identifier) ? `_swift_node_${identifier}` : identifier
 }

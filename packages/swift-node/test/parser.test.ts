@@ -151,6 +151,15 @@ public struct Mixed {
     expect(structs).toHaveLength(0)
   })
 
+  it('skips structs with borrowed buffer fields', () => {
+    const source = `
+public struct Packet {
+    public let bytes: UnsafeRawBufferPointer
+}
+`
+    expect(parseSwiftStructs(source)).toHaveLength(0)
+  })
+
   it('skips structs with private stored fields', () => {
     const source = `
 public struct User {
