@@ -198,8 +198,12 @@ test('initializes and builds a project from the packaged CLI', () => {
     ) {
       throw new Error('swift-node init should create conditional ESM/CJS exports')
     }
-    const gitignore = readFileSync(path.join(appDir, '.gitignore'), 'utf-8')
-    for (const output of ['dist_swift-node/']) {
+    const gitignorePath = path.join(appDir, '.gitignore')
+    if (!existsSync(gitignorePath)) {
+      throw new Error('swift-node init should create a .gitignore')
+    }
+    const gitignore = readFileSync(gitignorePath, 'utf-8')
+    for (const output of ['node_modules/', 'dist_swift-node/']) {
       if (!gitignore.split(/\r?\n/).includes(output)) {
         throw new Error(`swift-node init should ignore ${output}`)
       }
