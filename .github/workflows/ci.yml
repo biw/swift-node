@@ -250,6 +250,9 @@ jobs:
 
       # Example coverage is owned by the three dedicated jobs above. Keep the
       # remaining, non-example integration checks here to avoid duplicate runs.
+      - name: Test Node warning policy
+        run: node scripts/run-without-node-warnings.mjs vp test test/node-warning-policy.test.mjs
+
       - name: Test `init <package-name>` and `init .` quick starts
         run: node scripts/run-without-node-warnings.mjs vp test test/quickstart.test.mjs
 
