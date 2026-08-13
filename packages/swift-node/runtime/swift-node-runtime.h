@@ -42,6 +42,21 @@ static inline bool swift_node_napi_ok(napi_env env, napi_status status, const ch
     return false;
 }
 
+// Thread-safe function callbacks have no JavaScript caller to receive an
+// exception. Clear a callback exception after delivery so it neither leaks
+// into a later Node-API call nor triggers Node's uncaught-callback warning.
+static inline void swift_node_call_function_without_propagating_exception(
+    napi_env env,
+    napi_value receiver,
+    napi_value callback,
+    size_t argc,
+    napi_value* argv) {
+    if (napi_call_function(env, receiver, callback, argc, argv, nullptr) == napi_pending_exception) {
+        napi_value ignored;
+        napi_get_and_clear_last_exception(env, &ignored);
+    }
+}
+
 static inline bool swift_node_expect_argc(napi_env env, size_t actual, size_t expected) {
     if (actual >= expected) return true;
     napi_throw_type_error(env, nullptr, "Not enough arguments");

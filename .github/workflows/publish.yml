@@ -69,13 +69,9 @@ jobs:
 
           npm_registry ping --registry=https://registry.npmjs.org
 
-          SWIFT_NODE_VERSION=$(node -p "require('./packages/swift-node/package.json').version")
-          SWIFT_NODE_UNPLUGIN_VERSION=$(node -p "require('./packages/swift-node-unplugin/package.json').version")
+          node scripts/check-package-versions.mjs
 
-          if [ "$SWIFT_NODE_VERSION" != "$SWIFT_NODE_UNPLUGIN_VERSION" ]; then
-            echo "swift-node and swift-node-unplugin must use the same release version" >&2
-            exit 1
-          fi
+          SWIFT_NODE_VERSION=$(node -p "require('./packages/swift-node/package.json').version")
 
           echo "version=$SWIFT_NODE_VERSION" >> "$GITHUB_OUTPUT"
 

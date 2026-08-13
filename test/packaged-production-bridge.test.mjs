@@ -11,20 +11,20 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { test } from 'vite-plus/test'
-import { executableForPlatform, executionOptionsForPlatform } from './command.mjs'
+import { commandInvocation } from './command.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 let tmpRoot
 let packDir
 let addonDir
 let consumerDir
-const tsgo = path.join(rootDir, 'node_modules', '.bin', 'tsgo')
+const tsgo = path.join(rootDir, 'node_modules', '@typescript', 'native-preview', 'bin', 'tsgo')
 
 function run(cmd, args, cwd = rootDir) {
-  execFileSync(executableForPlatform(cmd), args, {
+  const invocation = commandInvocation(cmd, args)
+  execFileSync(invocation.command, invocation.args, {
     cwd,
     stdio: 'inherit',
-    ...executionOptionsForPlatform(cmd),
   })
 }
 
@@ -193,8 +193,9 @@ void wrong
 `,
     )
     run(
-      tsgo,
+      process.execPath,
       [
+        tsgo,
         '--module',
         'NodeNext',
         '--moduleResolution',

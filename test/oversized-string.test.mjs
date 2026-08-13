@@ -9,17 +9,17 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'vite-plus/test'
-import { executableForPlatform, executionOptionsForPlatform } from './command.mjs'
+import { commandInvocation } from './command.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cli = path.join(rootDir, 'packages', 'swift-node', 'bin', 'swift-node.js')
 let tmp
 
 function run(cmd, args, cwd = tmp) {
-  execFileSync(executableForPlatform(cmd), args, {
+  const invocation = commandInvocation(cmd, args)
+  execFileSync(invocation.command, invocation.args, {
     cwd,
     stdio: 'inherit',
-    ...executionOptionsForPlatform(cmd),
   })
 }
 

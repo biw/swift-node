@@ -438,6 +438,7 @@ describe('generateAddonCpp', () => {
     expect(cpp).toContain('napi_unref_threadsafe_function(env, callback_state->tsfn)')
     expect(cpp).toContain('napi_ref_threadsafe_function(state->env, state->tsfn)')
     expect(cpp).toContain('unref_callback_delivery_monitor_start(env, state)')
+    expect(cpp).toContain('swift_node_call_function_without_propagating_exception')
   })
 
   it('generates a trampoline that copies string data with its byte length', () => {

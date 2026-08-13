@@ -4,13 +4,15 @@
   "description": "Node-API bridge for Swift. Write native Node addons in Swift without C++ glue.",
   "scripts": {
     "build:core": "pnpm --filter swift-node build && pnpm --filter swift-node-unplugin build",
+    "check:package-versions": "node scripts/check-package-versions.mjs",
     "build:example:hello-world": "pnpm --dir examples/hello-world build",
     "build:example:hello-world-tsdown": "pnpm --dir examples/hello-world-tsdown build",
     "build:example:secure-storage": "pnpm --dir examples/secure-storage build && pnpm --dir examples/secure-storage-consumer-esm build",
     "run:example:secure-storage-consumer-esm": "pnpm --dir examples/secure-storage-consumer-esm start",
     "build:example:timer-callback": "pnpm --dir examples/timer-callback build",
     "build:examples": "pnpm build:example:hello-world && pnpm build:example:hello-world-tsdown && pnpm build:example:secure-storage && pnpm build:example:timer-callback",
-    "precommit": "pnpm build:core && pnpm --dir examples/timer-callback build && pnpm --dir examples/timer-callback test"
+    "precommit": "pnpm build:core && pnpm --dir examples/timer-callback build && pnpm --dir examples/timer-callback test",
+    "test": "node scripts/run-without-node-warnings.mjs vp test run"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
