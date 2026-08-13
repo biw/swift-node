@@ -1070,7 +1070,7 @@ export function cmdBuild(cwd = process.cwd(), dependencies: BuildDependencies = 
       // after this invocation has regenerated any output files. This happens
       // only after the generated directory itself has been made safe, so a
       // replaced output-directory symlink cannot redirect the deletion.
-      rmSync(path.join(generatedDir, nativeBuildManifestFilename), { force: true })
+      rmSync(path.join(generatedDir, nativeBuildManifestFilename), { force: true, recursive: true })
 
       // Rebuilds own these exact generated files. Removing them first avoids
       // following a replaced symlink and removes stale declarations/loaders.

@@ -126,6 +126,35 @@ describe('native build manifest', () => {
     })
   })
 
+  it('rebuilds when the manifest path is replaced with a directory or symlink', () => {
+    withProject((projectDir) => {
+      const calls = { swift: 0, cpp: 0, link: 0 }
+      const dependencies = fakeBuildDependencies(calls)
+      const generatedDirectory = path.join(projectDir, 'dist_swift-node')
+      const manifestFile = path.join(generatedDirectory, '.swift-node-build.json')
+
+      cmdBuild(projectDir, dependencies)
+      rmSync(manifestFile)
+      mkdirSync(manifestFile)
+      cmdBuild(projectDir, dependencies)
+      expect(calls).toEqual({ swift: 2, cpp: 2, link: 2 })
+
+      if (process.platform === 'win32') return
+
+      const externalManifest = path.join(projectDir, 'external-manifest')
+      const externalContents = readFileSync(manifestFile, 'utf8')
+      writeFileSync(externalManifest, externalContents)
+      rmSync(manifestFile)
+      symlinkSync(externalManifest, manifestFile)
+
+      expect(readNativeBuildManifest(generatedDirectory)).toBeNull()
+      cmdBuild(projectDir, dependencies)
+
+      expect(calls).toEqual({ swift: 3, cpp: 3, link: 3 })
+      expect(readFileSync(externalManifest, 'utf8')).toBe(externalContents)
+    })
+  })
+
   it('rebuilds when Swift content or native package/toolchain target configuration changes', () => {
     withProject((projectDir) => {
       const calls = { swift: 0, cpp: 0, link: 0 }

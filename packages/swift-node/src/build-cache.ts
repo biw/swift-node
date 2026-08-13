@@ -130,7 +130,10 @@ export function manifestPath(generatedDirectory: string): string {
 
 export function readNativeBuildManifest(generatedDirectory: string): NativeBuildManifest | null {
   try {
-    const parsed = JSON.parse(readFileSync(manifestPath(generatedDirectory), 'utf8')) as unknown
+    const manifestFile = manifestPath(generatedDirectory)
+    const stats = lstatSync(manifestFile)
+    if (!stats.isFile() || stats.isSymbolicLink()) return null
+    const parsed = JSON.parse(readFileSync(manifestFile, 'utf8')) as unknown
     if (typeof parsed !== 'object' || parsed === null) return null
     const manifest = parsed as Partial<NativeBuildManifest>
     if (
