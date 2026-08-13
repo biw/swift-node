@@ -7,7 +7,10 @@ import {
   existsSync,
   copyFileSync,
   mkdtempSync,
+  readdirSync,
+  realpathSync,
   rmSync,
+  lstatSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +42,14 @@ import {
   generateSourceEntryTs,
 } from './generator.js'
 import { compileSwift, compileCpp, getNodeInclude, isSupportedPlatform, link } from './compiler.js'
+import {
+  fileHash,
+  isNativeBuildUpToDate,
+  nativeBuildManifestFilename,
+  readNativeBuildManifest,
+  type NativeBuildCacheConfiguration,
+  writeNativeBuildManifest,
+} from './build-cache.js'
 import { validateExports } from './validator.js'
 import {
   configureYarn,
@@ -61,6 +72,7 @@ import {
 } from './prebuild.js'
 
 const generatedDirName = 'dist_swift-node'
+const generatedRuntimeFiles = ['index.d.ts', 'index.d.cts', 'index.d.mts', 'index.mjs', 'index.cjs']
 
 function packageVersion(): string {
   try {
@@ -529,7 +541,164 @@ export default defineConfig({
   }
 }
 
-function cmdBuild(cwd = process.cwd()) {
+export interface BuildDependencies {
+  compileSwift?: typeof compileSwift
+  compileCpp?: typeof compileCpp
+  link?: typeof link
+  toolchainIdentity?: (cwd: string) => NativeBuildCacheConfiguration['toolchain']
+}
+
+function compilerExecutable(command: string): string {
+  const pathEnvironment = process.env.PATH ?? process.env.Path ?? ''
+  const extensions =
+    process.platform === 'win32'
+      ? ['', '.exe', '.cmd', '.bat']
+      : ['']
+  for (const directory of pathEnvironment.split(path.delimiter)) {
+    if (!directory) continue
+    for (const extension of extensions) {
+      const candidate = path.join(directory, `${command}${extension}`)
+      if (!existsSync(candidate)) continue
+      try {
+        return realpathSync(candidate)
+      } catch {
+        return candidate
+      }
+    }
+  }
+  return command
+}
+
+function compilerIdentity(command: string): string {
+  return fileIdentity(compilerExecutable(command))
+}
+
+function fileIdentity(file: string): string {
+  try {
+    return `${realpathSync(file)}:${fileHash(file)}`
+  } catch {
+    return `${file}:unavailable`
+  }
+}
+
+function currentToolchainIdentity(): NativeBuildCacheConfiguration['toolchain'] {
+  return {
+    swiftc: compilerIdentity('swiftc'),
+    clang: compilerIdentity('clang++'),
+  }
+}
+
+function nodeHeadersIdentity(): string {
+  const includeDirectory = getNodeInclude()
+  if (!includeDirectory) return 'unavailable'
+
+  try {
+    // These are the Node-API headers directly or transitively included by the
+    // generated bridge. Hashing this small set keeps the cache-hit path cheap
+    // while still noticing a replaced nodedir or changed Node API surface.
+    const nodeApiHeaders = [
+      'node_api.h',
+      'node_api_types.h',
+      'js_native_api.h',
+      'js_native_api_types.h',
+      'node_version.h',
+    ]
+    return [
+      realpathSync(includeDirectory),
+      ...nodeApiHeaders
+        .map((header) => path.join(includeDirectory, header))
+        .filter(existsSync)
+        .map((header) => `${path.basename(header)}:${fileHash(header)}`),
+    ].join('|')
+  } catch {
+    return `${includeDirectory}:unavailable`
+  }
+}
+
+function currentCompileTarget(): NativeBuildCacheConfiguration['compileTarget'] {
+  return {
+    developerDir: process.env.DEVELOPER_DIR ?? '',
+    nodeHeaders: nodeHeadersIdentity(),
+    sdkRoot: process.env.SDKROOT ?? '',
+    toolchains: process.env.TOOLCHAINS ?? '',
+    swiftFlags: process.env.SWIFTFLAGS ?? '',
+    cFlags: process.env.CFLAGS ?? '',
+    cxxFlags: process.env.CXXFLAGS ?? '',
+    ldFlags: process.env.LDFLAGS ?? '',
+  }
+}
+
+function generatorRuntimeIdentity(): NativeBuildCacheConfiguration['generatorRuntime'] {
+  return {
+    cli: fileIdentity(__filename),
+    runtimeHeader: fileIdentity(path.resolve(__dirname, '..', 'runtime', 'swift-node-runtime.h')),
+  }
+}
+
+function nativeBuildConfiguration(
+  config: ReturnType<typeof readConfig>,
+  toolchain: NativeBuildCacheConfiguration['toolchain'],
+): NativeBuildCacheConfiguration {
+  return {
+    moduleName: config.moduleName,
+    shipSwiftRuntime: config.shipSwiftRuntime,
+    swiftNodeVersion: packageVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    nativeTarget: nativeTargetId(),
+    minMacosVersion: config.minMacosVersion,
+    nodeVersion: process.versions.node,
+    nodeApiVersion: process.versions.napi ?? '',
+    toolchain,
+    generatorRuntime: generatorRuntimeIdentity(),
+    compileTarget: currentCompileTarget(),
+  }
+}
+
+function inputHashes(cwd: string, sources: readonly string[]): Record<string, string> {
+  return Object.fromEntries(sources.map((source) => [source, fileHash(path.resolve(cwd, source))]))
+}
+
+function runtimeSidecarFiles(generatedDir: string, nativeOutputDir: string): string[] {
+  if (nativeOutputDir === generatedDir || !existsSync(nativeOutputDir)) return []
+  return readdirSync(nativeOutputDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && isRuntimeSidecar(entry.name))
+    .map((entry) => path.relative(generatedDir, path.join(nativeOutputDir, entry.name)))
+    .sort()
+}
+
+function isRuntimeSidecar(filename: string): boolean {
+  return filename.toLowerCase().endsWith('.dll') || /\.so(?:\..+)?$/i.test(filename)
+}
+
+function removeNativeArtifacts(nativeOutputDir: string): void {
+  if (!existsSync(nativeOutputDir)) return
+  for (const entry of readdirSync(nativeOutputDir, { withFileTypes: true })) {
+    if (entry.name.endsWith('.node') || isRuntimeSidecar(entry.name)) {
+      rmSync(path.join(nativeOutputDir, entry.name), { force: true, recursive: true })
+    }
+  }
+}
+
+function removeGeneratedRuntimeFiles(generatedDir: string): void {
+  for (const output of generatedRuntimeFiles) {
+    rmSync(path.join(generatedDir, output), { force: true, recursive: true })
+  }
+}
+
+function ensureGeneratedDirectory(directory: string): void {
+  try {
+    const stats = lstatSync(directory)
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      rmSync(directory, { force: true, recursive: true })
+    }
+  } catch {
+    // The directory does not exist yet, or became unavailable while checking.
+  }
+  mkdirSync(directory, { recursive: true })
+}
+
+export function cmdBuild(cwd = process.cwd(), dependencies: BuildDependencies = {}) {
   if (!isSupportedPlatform()) {
     console.error(
       `Error: swift-node build supports macOS, Linux, and Windows; received ${process.platform}.`,
@@ -537,6 +706,36 @@ function cmdBuild(cwd = process.cwd()) {
     process.exit(1)
   }
   const config = readConfig(cwd)
+
+  const generatedDir = path.join(cwd, generatedDirName)
+  const nativeOutputDir =
+    process.platform === 'darwin' ? generatedDir : path.join(generatedDir, nativeTargetId())
+  const binaryName = prebuildFilename(config.moduleName)
+  const expectedOutputs = [
+    ...generatedRuntimeFiles,
+    path.relative(generatedDir, path.join(nativeOutputDir, binaryName)),
+  ]
+  const inputs = inputHashes(cwd, config.swiftSources)
+  let buildConfiguration: NativeBuildCacheConfiguration | undefined
+
+  // On a first build, generating the ESM/CJS runtime must happen immediately:
+  // tsdown starts declaration generation concurrently with this plugin. An
+  // existing manifest, however, is only trusted after re-identifying the
+  // active toolchain.
+  if (readNativeBuildManifest(generatedDir)) {
+    buildConfiguration = nativeBuildConfiguration(
+      config,
+      (dependencies.toolchainIdentity ?? (() => currentToolchainIdentity()))(cwd),
+    )
+    if (isNativeBuildUpToDate(generatedDir, inputs, buildConfiguration, expectedOutputs)) {
+      console.log(`Native addon is up to date: ${config.moduleName}`)
+      return
+    }
+  }
+
+  // A failed replacement must not leave a previous build looking valid after
+  // this invocation has regenerated any of its output files.
+  rmSync(path.join(generatedDir, nativeBuildManifestFilename), { force: true })
 
   console.log(`Building ${config.moduleName}...`)
 
@@ -625,19 +824,44 @@ function cmdBuild(cwd = process.cwd()) {
   // 2. Generate persistent runtime files in dist_swift-node/ and compilation-only files
   // in a temporary directory. A project therefore never accumulates bridge
   // sources or object files between builds.
-  const generatedDir = path.join(cwd, generatedDirName)
   // macOS has no bundled Swift runtime sidecars, so its target-qualified
   // binaries can live directly beside the generated runtime. Linux and
   // Windows keep a target directory because their Swift runtime libraries
   // must be loaded from the same directory as the addon.
-  const nativeOutputDir =
-    process.platform === 'darwin' ? generatedDir : path.join(generatedDir, nativeTargetId())
   const scratchDir = mkdtempSync(path.join(tmpdir(), 'swift-node-build-'))
-  mkdirSync(generatedDir, { recursive: true })
-  mkdirSync(nativeOutputDir, { recursive: true })
+  ensureGeneratedDirectory(generatedDir)
+  if (nativeOutputDir !== generatedDir) ensureGeneratedDirectory(nativeOutputDir)
 
   try {
     const runtimeDir = path.resolve(__dirname, '..', 'runtime')
+
+    // Rebuilds own these exact generated files. Removing them first avoids
+    // following a replaced symlink and removes stale declarations/loaders.
+    removeGeneratedRuntimeFiles(generatedDir)
+
+    // Keep the runtime API available before preparing compiler-only bridge
+    // sources. tsdown can begin its declaration pass concurrently with the
+    // unplugin's native build hook, and this entry point is all it needs to
+    // resolve the generated module.
+    writeFileSync(
+      path.join(generatedDir, 'index.d.ts'),
+      generateDts(allFunctions, config.moduleName, allStructs),
+    )
+    writeFileSync(
+      path.join(generatedDir, 'index.d.cts'),
+      generateDtsCjs(allFunctions, config.moduleName, allStructs),
+    )
+    writeFileSync(
+      path.join(generatedDir, 'index.mjs'),
+      generateEntryMjs(allFunctions, config.moduleName),
+    )
+    writeFileSync(
+      path.join(generatedDir, 'index.cjs'),
+      generateEntryCjs(allFunctions, config.moduleName),
+    )
+    // TypeScript resolves types for .mjs via .d.mts.
+    copyFileSync(path.join(generatedDir, 'index.d.ts'), path.join(generatedDir, 'index.d.mts'))
+    console.log('  Generated dist_swift-node runtime files')
 
     // Generate Swift wrappers for export-annotated functions.
     let wrappersSwiftPath: string | null = null
@@ -668,27 +892,15 @@ function cmdBuild(cwd = process.cwd()) {
       generateBridgeH(allFunctions, config.moduleName, allStructs),
     )
 
-    // Keep only the generated runtime API in the project. These files are
-    // required both for local use and for a package assembled from target builds.
-    writeFileSync(
-      path.join(generatedDir, 'index.d.ts'),
-      generateDts(allFunctions, config.moduleName, allStructs),
+    buildConfiguration ??= nativeBuildConfiguration(
+      config,
+      (dependencies.toolchainIdentity ?? (() => currentToolchainIdentity()))(cwd),
     )
-    writeFileSync(
-      path.join(generatedDir, 'index.d.cts'),
-      generateDtsCjs(allFunctions, config.moduleName, allStructs),
-    )
-    writeFileSync(
-      path.join(generatedDir, 'index.mjs'),
-      generateEntryMjs(allFunctions, config.moduleName),
-    )
-    writeFileSync(
-      path.join(generatedDir, 'index.cjs'),
-      generateEntryCjs(allFunctions, config.moduleName),
-    )
-    // TypeScript resolves types for .mjs via .d.mts.
-    copyFileSync(path.join(generatedDir, 'index.d.ts'), path.join(generatedDir, 'index.d.mts'))
-    console.log('  Generated dist_swift-node runtime files')
+
+    // Native binaries and runtime sidecars are compiler output. Clear prior
+    // target artifacts before linking so a renamed module, changed toolchain,
+    // or changed shipSwiftRuntime cannot retain and re-bundle stale files.
+    removeNativeArtifacts(nativeOutputDir)
 
     // 3. Compile & link. Object files belong with the temporary bridge code.
     const swiftSources = [...config.swiftSources]
@@ -696,7 +908,7 @@ function cmdBuild(cwd = process.cwd()) {
 
     const compilerConfig = {
       moduleName: config.moduleName,
-      binaryName: prebuildFilename(config.moduleName),
+      binaryName,
       swiftSources,
       projectDir: cwd,
       intermediateDir: scratchDir,
@@ -708,13 +920,18 @@ function cmdBuild(cwd = process.cwd()) {
     }
 
     console.log('  Compiling Swift...')
-    const swiftObj = compileSwift(compilerConfig)
+    const swiftObj = (dependencies.compileSwift ?? compileSwift)(compilerConfig)
 
     console.log('  Compiling C++...')
-    const cppObj = compileCpp(compilerConfig)
+    const cppObj = (dependencies.compileCpp ?? compileCpp)(compilerConfig)
 
     console.log('  Linking...')
-    const nodeFile = link(compilerConfig, [swiftObj, cppObj])
+    const nodeFile = (dependencies.link ?? link)(compilerConfig, [swiftObj, cppObj])
+
+    writeNativeBuildManifest(generatedDir, inputs, buildConfiguration, [
+      ...expectedOutputs,
+      ...(config.shipSwiftRuntime ? runtimeSidecarFiles(generatedDir, nativeOutputDir) : []),
+    ])
 
     console.log(`\n  ✓ Built: ${path.relative(cwd, nodeFile)}`)
   } finally {

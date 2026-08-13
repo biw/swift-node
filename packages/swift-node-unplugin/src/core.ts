@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -7,7 +6,6 @@ import path from 'node:path'
 export const generatedDirectoryName = 'dist_swift-node'
 
 interface CachedSwiftBuild {
-  fingerprint: string
   promise: Promise<void>
 }
 
@@ -27,6 +25,7 @@ export interface SwiftNodeNativeAssetsOptions {
 interface PackageManifest {
   bin?: string | Record<string, string>
   name?: string
+  swiftNode?: { shipSwiftRuntime?: unknown }
 }
 
 function packageManifest(projectDir: string): PackageManifest {
@@ -50,6 +49,18 @@ export function projectModuleName(projectDir: string): string {
   }
 
   return moduleNameForPackage(name)
+}
+
+/** The package.json fields that can change swift-node's native build output. */
+export function nativeBuildPackageConfiguration(projectDir: string): string {
+  const manifest = packageManifest(projectDir)
+  if (!manifest.name || typeof manifest.name !== 'string') {
+    throw new Error(`package.json at ${projectDir} must contain a string name.`)
+  }
+  return JSON.stringify({
+    moduleName: moduleNameForPackage(manifest.name),
+    shipSwiftRuntime: manifest.swiftNode?.shipSwiftRuntime !== false,
+  })
 }
 
 /**
@@ -142,23 +153,6 @@ export function swiftWatchFiles(projectDir: string): string[] {
   ]
 }
 
-/**
- * A content fingerprint keeps parallel output formats on one Swift build while
- * recompiling when a subsequent long-running bundler observes changed Swift
- * sources or package metadata.
- */
-export function swiftBuildFingerprint(projectDir: string): string {
-  const hash = createHash('sha256')
-  const sourceDirectory = path.join(projectDir, 'src')
-  for (const file of swiftWatchFiles(projectDir).filter((file) => file !== sourceDirectory)) {
-    hash.update(path.relative(projectDir, file))
-    hash.update('\0')
-    hash.update(readFileSync(file))
-    hash.update('\0')
-  }
-  return hash.digest('hex')
-}
-
 /** Return an output-relative filename without allowing traversal outside it. */
 export function nativeAssetFileName(
   binaryPath: string,
@@ -242,24 +236,23 @@ export async function runSwiftNodeBuild(projectDir: string): Promise<void> {
 }
 
 /**
- * Runs one Swift build per project in the current bundler process. tsdown
- * invokes the Rolldown plugin once for each output format, but both formats
- * consume the same generated Swift Node runtime and native binary.
+ * Shares an in-flight Swift build per project. tsdown invokes the Rolldown
+ * plugin once for each output format, but both formats consume the same
+ * generated Swift Node runtime and native binary. Completed builds are not
+ * retained here: swift-node's output manifest is the persistent cache.
  */
 export async function ensureSwiftNodeBuild(projectDir: string): Promise<void> {
   const key = path.resolve(projectDir)
-  const fingerprint = swiftBuildFingerprint(key)
   let build = swiftBuilds.get(key)
-  if (!build || build.fingerprint !== fingerprint) {
-    build = { fingerprint, promise: runSwiftNodeBuild(key) }
+  if (!build) {
+    build = { promise: runSwiftNodeBuild(key) }
     swiftBuilds.set(key, build)
   }
 
   try {
     await build.promise
-  } catch (error) {
+  } finally {
     if (swiftBuilds.get(key) === build) swiftBuilds.delete(key)
-    throw error
   }
 }
 
