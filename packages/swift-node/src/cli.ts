@@ -923,11 +923,7 @@ export function cmdBuild(cwd = process.cwd(), dependencies: BuildDependencies = 
       path.relative(generatedDir, path.join(nativeOutputDir, binaryName)),
     ]
     let inputs: Record<string, string>
-    try {
-      inputs = inputHashes(cwd, config.swiftSources)
-    } catch (error) {
-      throw error
-    }
+    inputs = inputHashes(cwd, config.swiftSources)
     let buildConfiguration: NativeBuildCacheConfiguration | undefined
 
     // On a first build, generating the ESM/CJS runtime must happen immediately:

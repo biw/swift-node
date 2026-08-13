@@ -371,7 +371,6 @@ describe('native build manifest', () => {
   it('publishes a cache entry after a source is added during cache-hit validation', () => {
     withProject((projectDir) => {
       const calls = { swift: 0, cpp: 0, link: 0 }
-      const source = path.join(projectDir, 'src', 'native.swift')
       const firstBuild = fakeBuildDependencies(calls)
       cmdBuild(projectDir, firstBuild)
 
