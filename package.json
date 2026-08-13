@@ -4,6 +4,7 @@
   "description": "Node-API bridge for Swift. Write native Node addons in Swift without C++ glue.",
   "scripts": {
     "build:core": "pnpm --filter swift-node build && pnpm --filter swift-node-unplugin build",
+    "check:package-versions": "node scripts/check-package-versions.mjs",
     "build:example:hello-world": "pnpm --dir examples/hello-world build",
     "build:example:hello-world-tsdown": "pnpm --dir examples/hello-world-tsdown build",
     "build:example:secure-storage": "pnpm --dir examples/secure-storage build && pnpm --dir examples/secure-storage-consumer-esm build",
