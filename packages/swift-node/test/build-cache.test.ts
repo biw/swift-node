@@ -334,7 +334,7 @@ describe('native build manifest', () => {
 
       cmdBuild(projectDir, dependencies)
 
-      expect(compiledSources).toContain('src/native.swift')
+      expect(compiledSources).toContain(path.join('src', 'native.swift'))
       expect(readNativeBuildManifest(path.join(projectDir, 'dist_swift-node'))).toBeNull()
     })
   })
