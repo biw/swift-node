@@ -6,6 +6,7 @@ import {
   findNativeBinaries,
   findSwiftRuntimeLibraries,
   generatedDirectoryName,
+  isSwiftNodeBuildInFlight,
   nativeBuildPackageConfiguration,
   nativeAssetFileName,
   swiftWatchFiles,
@@ -132,17 +133,24 @@ export const swiftNodeNativeAssets = /* #__PURE__ */ createUnplugin<
     },
 
     watchChange(id) {
-      const packageChanged =
-        path.resolve(projectDir, id) === path.join(projectDir, 'package.json')
+      const packageChanged = path.resolve(projectDir, id) === path.join(projectDir, 'package.json')
       const nextPackageConfiguration = packageChanged
         ? tryNativeBuildPackageConfiguration(projectDir)
         : packageConfiguration
       const packageConfigurationChanged =
         packageChanged && nextPackageConfiguration !== packageConfiguration
+      const generatedNativeOutputChanged = isGeneratedNativeOutput(
+        projectDir,
+        generatedOutputDirectory,
+        id,
+      )
       if (
         isSwiftBuildInput(projectDir, id) ||
         packageConfigurationChanged ||
-        isGeneratedNativeOutput(projectDir, generatedOutputDirectory, id)
+        // swift-node itself writes these files during an active CLI invocation.
+        // Ignore those self-notifications; a changed Swift/package input marks
+        // the in-flight run dirty and the core starts exactly one replacement.
+        (generatedNativeOutputChanged && !isSwiftNodeBuildInFlight(projectDir))
       ) {
         needsSwiftBuild = true
         invalidateSwiftNodeBuild(projectDir)

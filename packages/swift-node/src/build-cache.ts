@@ -1,5 +1,14 @@
-import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 
 export const nativeBuildManifestFilename = '.swift-node-build.json'
@@ -26,6 +35,7 @@ export interface NativeBuildCacheConfiguration {
   compileTarget: {
     developerDir: string
     nodeHeaders: string
+    nodeImportLibrary: string
     sdkRoot: string
     toolchains: string
     swiftFlags: string
@@ -79,14 +89,13 @@ function isGeneratorRuntime(
   )
 }
 
-function isCompileTarget(
-  value: unknown,
-): value is NativeBuildCacheConfiguration['compileTarget'] {
+function isCompileTarget(value: unknown): value is NativeBuildCacheConfiguration['compileTarget'] {
   return (
     typeof value === 'object' &&
     value !== null &&
     typeof (value as { developerDir?: unknown }).developerDir === 'string' &&
     typeof (value as { nodeHeaders?: unknown }).nodeHeaders === 'string' &&
+    typeof (value as { nodeImportLibrary?: unknown }).nodeImportLibrary === 'string' &&
     typeof (value as { sdkRoot?: unknown }).sdkRoot === 'string' &&
     typeof (value as { toolchains?: unknown }).toolchains === 'string' &&
     typeof (value as { swiftFlags?: unknown }).swiftFlags === 'string' &&
@@ -154,6 +163,36 @@ function sameConfiguration(
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function isSafeGeneratedDirectory(generatedDirectory: string): boolean {
+  try {
+    const stats = lstatSync(generatedDirectory)
+    return stats.isDirectory() && !stats.isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+function isSafeOutputFile(generatedDirectory: string, relativePath: string): boolean {
+  const output = path.resolve(generatedDirectory, relativePath)
+  const relative = path.relative(generatedDirectory, output)
+  if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    return false
+  }
+
+  try {
+    let directory = generatedDirectory
+    for (const part of relative.split(path.sep).slice(0, -1)) {
+      directory = path.join(directory, part)
+      const stats = lstatSync(directory)
+      if (!stats.isDirectory() || stats.isSymbolicLink()) return false
+    }
+    const stats = lstatSync(output)
+    return stats.isFile() && !stats.isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 /**
  * A cache entry is valid only when every input, native-build setting, and
  * generated runtime/native output has its exact recorded content hash.
@@ -166,30 +205,19 @@ export function isNativeBuildUpToDate(
 ): boolean {
   const manifest = readNativeBuildManifest(generatedDirectory)
   if (!manifest) return false
-  try {
-    const generatedDirectoryStats = lstatSync(generatedDirectory)
-    if (!generatedDirectoryStats.isDirectory() || generatedDirectoryStats.isSymbolicLink()) return false
-  } catch {
-    return false
-  }
-  if (!sameRecord(manifest.inputs, inputs) || !sameConfiguration(manifest.configuration, configuration)) {
+  if (!isSafeGeneratedDirectory(generatedDirectory)) return false
+  if (
+    !sameRecord(manifest.inputs, inputs) ||
+    !sameConfiguration(manifest.configuration, configuration)
+  ) {
     return false
   }
   if (!requiredOutputs.every((output) => Object.hasOwn(manifest.outputs, output))) return false
 
   return Object.entries(manifest.outputs).every(([relativePath, hash]) => {
     const output = path.resolve(generatedDirectory, relativePath)
-    const relative = path.relative(generatedDirectory, output)
     try {
-      if (
-        path.isAbsolute(relative) ||
-        relative === '..' ||
-        relative.startsWith(`..${path.sep}`) ||
-        !existsSync(output) ||
-        !lstatSync(output).isFile()
-      ) {
-        return false
-      }
+      if (!existsSync(output) || !isSafeOutputFile(generatedDirectory, relativePath)) return false
       return fileHash(output) === hash
     } catch {
       return false
@@ -203,10 +231,13 @@ export function writeNativeBuildManifest(
   configuration: NativeBuildCacheConfiguration,
   outputPaths: readonly string[],
 ): void {
+  if (!isSafeGeneratedDirectory(generatedDirectory)) {
+    throw new Error('Cannot write native build manifest in an unsafe generated output directory.')
+  }
   const outputs: Record<string, string> = {}
   for (const relativePath of [...outputPaths].sort()) {
     const output = path.resolve(generatedDirectory, relativePath)
-    if (!existsSync(output) || !lstatSync(output).isFile()) {
+    if (!existsSync(output) || !isSafeOutputFile(generatedDirectory, relativePath)) {
       throw new Error(`Cannot write native build manifest because ${relativePath} is missing.`)
     }
     outputs[relativePath] = fileHash(output)
@@ -219,7 +250,20 @@ export function writeNativeBuildManifest(
     outputs,
   }
   const destination = manifestPath(generatedDirectory)
-  const temporary = `${destination}.${process.pid}.tmp`
-  writeFileSync(temporary, JSON.stringify(manifest, null, 2) + '\n')
-  renameSync(temporary, destination)
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`
+  let descriptor: number | undefined
+  let temporaryCreated = false
+  try {
+    // Exclusive creation avoids following a pre-existing temporary symlink.
+    descriptor = openSync(temporary, 'wx', 0o600)
+    temporaryCreated = true
+    writeFileSync(descriptor, JSON.stringify(manifest, null, 2) + '\n')
+    closeSync(descriptor)
+    descriptor = undefined
+    renameSync(temporary, destination)
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor)
+    if (temporaryCreated) rmSync(temporary, { force: true })
+    throw error
+  }
 }

@@ -7,6 +7,7 @@ export const generatedDirectoryName = 'dist_swift-node'
 
 interface CachedSwiftBuild {
   promise: Promise<void>
+  invalidated: boolean
 }
 
 const swiftBuilds = new Map<string, CachedSwiftBuild>()
@@ -243,20 +244,39 @@ export async function runSwiftNodeBuild(projectDir: string): Promise<void> {
  */
 export async function ensureSwiftNodeBuild(projectDir: string): Promise<void> {
   const key = path.resolve(projectDir)
-  let build = swiftBuilds.get(key)
-  if (!build) {
-    build = { promise: runSwiftNodeBuild(key) }
-    swiftBuilds.set(key, build)
-  }
+  while (true) {
+    let build = swiftBuilds.get(key)
+    if (!build) {
+      build = { promise: runSwiftNodeBuild(key), invalidated: false }
+      swiftBuilds.set(key, build)
+    }
 
-  try {
-    await build.promise
-  } finally {
+    try {
+      await build.promise
+    } catch (error) {
+      if (swiftBuilds.get(key) === build) swiftBuilds.delete(key)
+      throw error
+    }
+
+    if (!build.invalidated) {
+      if (swiftBuilds.get(key) === build) swiftBuilds.delete(key)
+      return
+    }
+
+    // A watched Swift/package change arrived while the current CLI process
+    // was still writing generated output. Keep sharing that process, then
+    // start precisely one fresh invocation for the new source state.
     if (swiftBuilds.get(key) === build) swiftBuilds.delete(key)
   }
 }
 
 /** Marks a watched Swift project dirty so its next bundler pass recompiles it. */
 export function invalidateSwiftNodeBuild(projectDir: string): void {
-  swiftBuilds.delete(path.resolve(projectDir))
+  const build = swiftBuilds.get(path.resolve(projectDir))
+  if (build) build.invalidated = true
+}
+
+/** True while this bundler process is already waiting for the Swift CLI. */
+export function isSwiftNodeBuildInFlight(projectDir: string): boolean {
+  return swiftBuilds.has(path.resolve(projectDir))
 }

@@ -35,6 +35,14 @@ function withProject(callback: (projectDir: string) => Promise<void>): Promise<v
   })
 }
 
+async function waitFor(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for test build to start.')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 describe('swiftNodeNativeAssets', () => {
   it('runs the project-local swift-node build before it emits native assets', async () => {
     await withProject(async (projectDir) => {
@@ -157,11 +165,7 @@ writeFileSync(path.join(output, 'my_addon.darwin-arm64.node'), 'native')
       plugin.watchChange!(path.join(sourceDirectory, 'native.swift'))
       await Reflect.apply(plugin.buildStart!, context, [])
 
-      const nativeOutput = path.join(
-        projectDir,
-        'dist_swift-node',
-        'my_addon.darwin-arm64.node',
-      )
+      const nativeOutput = path.join(projectDir, 'dist_swift-node', 'my_addon.darwin-arm64.node')
       writeFileSync(nativeOutput, 'changed')
       plugin.watchChange!(nativeOutput)
       await Reflect.apply(plugin.buildStart!, context, [])
@@ -179,6 +183,107 @@ writeFileSync(path.join(output, 'my_addon.darwin-arm64.node'), 'native')
     })
   })
 
+  it('does not overlap CLI builds when watch events arrive during an active build', async () => {
+    await withProject(async (projectDir) => {
+      writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify({ name: 'my-addon' }))
+      const sourceDirectory = path.join(projectDir, 'src')
+      const swiftNodeDirectory = path.join(projectDir, 'node_modules', 'swift-node')
+      const binDirectory = path.join(swiftNodeDirectory, 'bin')
+      mkdirSync(sourceDirectory)
+      mkdirSync(binDirectory, { recursive: true })
+      writeFileSync(path.join(sourceDirectory, 'native.swift'), '')
+      writeFileSync(
+        path.join(swiftNodeDirectory, 'package.json'),
+        JSON.stringify({ bin: { 'swift-node': 'bin/swift-node.js' } }),
+      )
+      const binPath = path.join(binDirectory, 'swift-node.js')
+      writeFileSync(
+        binPath,
+        `import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+const project = process.cwd()
+const output = path.join(project, 'dist_swift-node')
+const active = path.join(project, 'swift-build-active')
+if (existsSync(active)) appendFileSync(path.join(project, 'swift-builds.txt'), 'overlap\\n')
+writeFileSync(active, '')
+appendFileSync(path.join(project, 'swift-builds.txt'), 'start\\n')
+await new Promise((resolve) => setTimeout(resolve, 80))
+mkdirSync(output, { recursive: true })
+writeFileSync(path.join(output, 'my_addon.darwin-arm64.node'), 'native')
+rmSync(active)
+appendFileSync(path.join(project, 'swift-builds.txt'), 'end\\n')
+`,
+      )
+      chmodSync(binPath, 0o755)
+
+      const plugin = rolldownPlugin({ cwd: projectDir })
+      const context = {
+        addWatchFile() {},
+        emitFile() {
+          return 'asset'
+        },
+      }
+      const firstBuild = Reflect.apply(plugin.buildStart!, context, [])
+      await waitFor(() => existsSync(path.join(projectDir, 'swift-build-active')))
+
+      // A Swift edit marks the active CLI process dirty. Both output formats
+      // keep waiting for it instead of starting a second process concurrently.
+      plugin.watchChange!(path.join(sourceDirectory, 'native.swift'))
+      const secondFormat = Reflect.apply(plugin.buildStart!, context, [])
+      await Promise.all([firstBuild, secondFormat])
+
+      expect(readFileSync(path.join(projectDir, 'swift-builds.txt'), 'utf8')).toBe(
+        'start\nend\nstart\nend\n',
+      )
+    })
+  })
+
+  it('ignores generated-output watch notifications from its active CLI build', async () => {
+    await withProject(async (projectDir) => {
+      writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify({ name: 'my-addon' }))
+      const sourceDirectory = path.join(projectDir, 'src')
+      const swiftNodeDirectory = path.join(projectDir, 'node_modules', 'swift-node')
+      const binDirectory = path.join(swiftNodeDirectory, 'bin')
+      mkdirSync(sourceDirectory)
+      mkdirSync(binDirectory, { recursive: true })
+      writeFileSync(path.join(sourceDirectory, 'native.swift'), '')
+      writeFileSync(
+        path.join(swiftNodeDirectory, 'package.json'),
+        JSON.stringify({ bin: { 'swift-node': 'bin/swift-node.js' } }),
+      )
+      const binPath = path.join(binDirectory, 'swift-node.js')
+      writeFileSync(
+        binPath,
+        `import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+const project = process.cwd()
+writeFileSync(path.join(project, 'swift-build-active'), '')
+appendFileSync(path.join(project, 'swift-builds.txt'), 'build\\n')
+await new Promise((resolve) => setTimeout(resolve, 80))
+const output = path.join(project, 'dist_swift-node')
+mkdirSync(output, { recursive: true })
+writeFileSync(path.join(output, 'my_addon.darwin-arm64.node'), 'native')
+rmSync(path.join(project, 'swift-build-active'))
+`,
+      )
+      chmodSync(binPath, 0o755)
+
+      const plugin = rolldownPlugin({ cwd: projectDir })
+      const context = {
+        addWatchFile() {},
+        emitFile() {
+          return 'asset'
+        },
+      }
+      const build = Reflect.apply(plugin.buildStart!, context, [])
+      await waitFor(() => existsSync(path.join(projectDir, 'swift-build-active')))
+      plugin.watchChange!(path.join(projectDir, 'dist_swift-node', 'my_addon.darwin-arm64.node'))
+      await build
+
+      expect(readFileSync(path.join(projectDir, 'swift-builds.txt'), 'utf8')).toBe('build\n')
+    })
+  })
+
   it('does not throw when package.json is temporarily incomplete during watch mode', async () => {
     await withProject(async (projectDir) => {
       writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify({ name: 'my-addon' }))
@@ -190,7 +295,12 @@ writeFileSync(path.join(output, 'my_addon.darwin-arm64.node'), 'native')
       writeFileSync(path.join(generatedDirectory, 'my_addon.darwin-arm64.node'), 'native')
 
       const plugin = rolldownPlugin({ cwd: projectDir, build: false })
-      const context = { addWatchFile() {}, emitFile() { return 'asset' } }
+      const context = {
+        addWatchFile() {},
+        emitFile() {
+          return 'asset'
+        },
+      }
       await Reflect.apply(plugin.buildStart!, context, [])
       writeFileSync(path.join(projectDir, 'package.json'), '{')
 
