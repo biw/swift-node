@@ -4,7 +4,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { test } from 'vite-plus/test'
-import { executableForPlatform, executionOptionsForPlatform } from './command.mjs'
+import { commandInvocation } from './command.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 let tmpRoot
@@ -12,10 +12,10 @@ let packDir
 let appDir
 
 function run(cmd, args, cwd = rootDir) {
-  execFileSync(executableForPlatform(cmd), args, {
+  const invocation = commandInvocation(cmd, args)
+  execFileSync(invocation.command, invocation.args, {
     cwd,
     stdio: 'inherit',
-    ...executionOptionsForPlatform(cmd),
   })
 }
 
@@ -30,7 +30,7 @@ function findTarball(prefix) {
 }
 
 function runTypeScriptSmoke() {
-  const tsgo = path.join(rootDir, 'node_modules', '.bin', 'tsgo')
+  const tsgo = path.join(rootDir, 'node_modules', '@typescript', 'native-preview', 'bin', 'tsgo')
   writeFileSync(
     path.join(appDir, 'type-smoke.ts'),
     `
@@ -62,8 +62,9 @@ native.helloWorld('unexpected')
 `,
   )
   run(
-    tsgo,
+    process.execPath,
     [
+      tsgo,
       '--module',
       'NodeNext',
       '--moduleResolution',

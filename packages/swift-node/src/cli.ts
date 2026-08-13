@@ -48,7 +48,7 @@ import {
   PackageManagerName,
 } from './package-manager.js'
 import { gitignoreTemplate } from './gitignore.js'
-import { executableForPlatform, executionOptionsForPlatform } from './command.js'
+import { commandInvocationForPlatform } from './command.js'
 import {
   generatePrebuildCiWorkflow,
   generatePrebuildWorkflow,
@@ -173,10 +173,10 @@ function runPackageManagerCommand(
 ): void {
   const command = packageManager.source === 'corepack' ? 'corepack' : packageManager.name
   const commandArgs = packageManager.source === 'corepack' ? ['yarn', ...args] : args
-  execFileSync(executableForPlatform(command), commandArgs, {
+  const invocation = commandInvocationForPlatform(command, commandArgs)
+  execFileSync(invocation.command, invocation.args, {
     cwd: projectDir,
     stdio: 'inherit',
-    ...executionOptionsForPlatform(command),
   })
 }
 

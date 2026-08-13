@@ -2,15 +2,15 @@ import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'vite-plus/test'
-import { executableForPlatform, executionOptionsForPlatform } from './command.mjs'
+import { commandInvocation } from './command.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 function runVp(args) {
-  execFileSync(executableForPlatform('vp'), args, {
+  const invocation = commandInvocation('vp', args)
+  execFileSync(invocation.command, invocation.args, {
     cwd: rootDir,
     stdio: 'inherit',
-    ...executionOptionsForPlatform('vp'),
   })
 }
 

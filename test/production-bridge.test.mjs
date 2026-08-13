@@ -11,17 +11,17 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { beforeAll, describe, it } from 'vite-plus/test'
-import { executableForPlatform, executionOptionsForPlatform } from './command.mjs'
+import { commandInvocation } from './command.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cli = path.join(rootDir, 'packages', 'swift-node', 'bin', 'swift-node.js')
-const tsgo = path.join(rootDir, 'node_modules', '.bin', 'tsgo')
+const tsgo = path.join(rootDir, 'node_modules', '@typescript', 'native-preview', 'bin', 'tsgo')
 
 function run(cmd, args, cwd) {
-  execFileSync(executableForPlatform(cmd), args, {
+  const invocation = commandInvocation(cmd, args)
+  execFileSync(invocation.command, invocation.args, {
     cwd,
     stdio: 'inherit',
-    ...executionOptionsForPlatform(cmd),
   })
 }
 
@@ -38,8 +38,9 @@ function runCase({ name, source, sources = {}, typeAssertion, assertion, postAss
     if (typeAssertion) {
       writeFileSync(path.join(projectDir, 'type-smoke.ts'), typeAssertion)
       run(
-        tsgo,
+        process.execPath,
         [
+          tsgo,
           '--module',
           'ESNext',
           '--moduleResolution',
@@ -62,7 +63,11 @@ function runCase({ name, source, sources = {}, typeAssertion, assertion, postAss
     if (postAssertion) {
       writeFileSync(path.join(projectDir, 'post-assertion.cjs'), postAssertion)
       try {
-        run(process.execPath, ['--expose-gc', 'post-assertion.cjs'], projectDir)
+        run(
+          process.execPath,
+          ['--expose-gc', '--force-node-api-uncaught-exceptions-policy=true', 'post-assertion.cjs'],
+          projectDir,
+        )
       } catch (error) {
         runtimeFailures.push(`post-runtime assertion: ${error.message}`)
       }
@@ -854,23 +859,40 @@ addon.notify('throw', () => {
   callbackRan = true
   throw new Error('callback failure')
 })
-addon.endlessStream(() => { streamEvents += 1 })
-global.gc()
-setTimeout(() => {
-  if (!callbackRan) {
-    console.error('callback exception test did not invoke the callback')
-    process.exit(1)
-  }
-  if (addon.echoInt(42) !== 42) {
-    console.error('addon was unhealthy after a callback exception')
-    process.exit(1)
-  }
-  if (streamEvents > 1) {
-    console.error('garbage-collected stream subscription remained active:', streamEvents)
-    process.exit(1)
-  }
-  process.exit(0)
-}, 50)
+let subscription = addon.endlessStream(() => { streamEvents += 1 })
+const subscriptionRef = new WeakRef(subscription)
+subscription = null
+
+function fail(message) {
+  console.error(message)
+  process.exit(1)
+}
+
+function verifyAfterCollection(attempt = 0) {
+  global.gc()
+  setTimeout(() => {
+    if (subscriptionRef.deref()) {
+      if (attempt < 20) return setTimeout(() => verifyAfterCollection(attempt + 1), 0)
+      return fail('garbage-collected stream subscription was retained')
+    }
+
+    const eventsAtCollection = streamEvents
+    setTimeout(() => {
+      if (!callbackRan) {
+        return fail('callback exception test did not invoke the callback')
+      }
+      if (addon.echoInt(42) !== 42) {
+        return fail('addon was unhealthy after a callback exception')
+      }
+      if (streamEvents !== eventsAtCollection) {
+        return fail('garbage-collected stream subscription remained active: ' + streamEvents)
+      }
+      process.exit(0)
+    }, 60)
+  }, 5)
+}
+
+verifyAfterCollection()
 `,
   },
 ]

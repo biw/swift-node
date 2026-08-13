@@ -830,7 +830,7 @@ function generateCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftParam): str
       `    if (!swift_node_napi_ok(env, napi_get_global(env, &global), "Failed to read global object")) { unref_callback_delivery_${prefix}(env, state); return; }`,
     )
     lines.push(
-      `    swift_node_napi_ok(env, napi_call_function(env, global, js_callback, 0, nullptr, nullptr), "Callback invocation failed");`,
+      `    swift_node_call_function_without_propagating_exception(env, global, js_callback, 0, nullptr);`,
     )
     lines.push(`    unref_callback_delivery_${prefix}(env, state);`)
   } else {
@@ -901,7 +901,7 @@ function generateCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftParam): str
     }
 
     lines.push(
-      `    swift_node_napi_ok(env, napi_call_function(env, global, js_callback, ${callbackParams.length}, argv, nullptr), "Callback invocation failed");`,
+      `    swift_node_call_function_without_propagating_exception(env, global, js_callback, ${callbackParams.length}, argv);`,
     )
     lines.push(`    cleanup_trampoline_data_${prefix}(packed);`)
     lines.push(`    unref_callback_delivery_${prefix}(env, state);`)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test'
-import { executableForPlatform, executionOptionsForPlatform } from '../src/command'
+import { commandInvocationForPlatform, executableForPlatform } from '../src/command'
 
 describe('cross-platform command resolution', () => {
   it('uses Windows command shims for package-manager commands and local binaries', () => {
@@ -17,14 +17,20 @@ describe('cross-platform command resolution', () => {
     expect(executableForPlatform('pnpm', 'linux')).toBe('pnpm')
   })
 
-  it('runs Windows batch shims through cmd.exe but executes node.exe directly', () => {
-    expect(executionOptionsForPlatform('pnpm', 'win32')).toEqual({ shell: true })
+  it('runs Windows batch shims through cmd.exe without enabling child-process shell mode', () => {
+    expect(commandInvocationForPlatform('pnpm', ['--version'], 'win32', 'cmd.exe')).toEqual({
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', 'pnpm.cmd', '--version'],
+    })
     expect(
-      executionOptionsForPlatform(
+      commandInvocationForPlatform(
         'C:\\hostedtoolcache\\windows\\node\\24.18.0\\x64\\node.exe',
+        ['--version'],
         'win32',
       ),
-    ).toEqual({})
-    expect(executionOptionsForPlatform('pnpm', 'darwin')).toEqual({})
+    ).toEqual({
+      command: 'C:\\hostedtoolcache\\windows\\node\\24.18.0\\x64\\node.exe',
+      args: ['--version'],
+    })
   })
 })

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { commandInvocationForPlatform } from './command.js'
 
 export const packageManagerNames = ['npm', 'pnpm', 'bun'] as const
 
@@ -38,9 +39,9 @@ export function inferProjectPackageManager(projectDir: string): PackageManagerNa
 }
 
 function commandVersion(command: string, args: string[]): string | undefined {
-  const result = spawnSync(command, args, {
+  const invocation = commandInvocationForPlatform(command, args)
+  const result = spawnSync(invocation.command, invocation.args, {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
     stdio: ['ignore', 'pipe', 'ignore'],
   })
   if (result.status !== 0 || result.error) return undefined
@@ -86,9 +87,9 @@ export function findAvailablePackageManagers(
 
 /** Configure the current project to use the selected Yarn version via Corepack. */
 export function configureYarn(projectDir: string, version: string): void {
-  const result = spawnSync('corepack', ['use', `yarn@${version}`], {
+  const invocation = commandInvocationForPlatform('corepack', ['use', `yarn@${version}`])
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: projectDir,
-    shell: process.platform === 'win32',
     stdio: 'inherit',
   })
   if (result.status !== 0 || result.error) {

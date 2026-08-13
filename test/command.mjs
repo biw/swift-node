@@ -7,7 +7,19 @@ export function executableForPlatform(command, platform = process.platform) {
   return path.win32.extname(command) ? command : `${command}.cmd`
 }
 
-export function executionOptionsForPlatform(command, platform = process.platform) {
-  if (platform === 'win32' && command === 'vp') return {}
-  return platform === 'win32' && !path.win32.extname(command) ? { shell: true } : {}
+export function commandInvocation(
+  command,
+  args,
+  platform = process.platform,
+  cmdExecutable = process.env.ComSpec ?? 'cmd.exe',
+) {
+  const executable = executableForPlatform(command, platform)
+  const isBatchShim = platform === 'win32' && command !== 'vp' && !path.win32.extname(command)
+
+  if (!isBatchShim) return { command: executable, args: [...args] }
+
+  return {
+    command: cmdExecutable,
+    args: ['/d', '/s', '/c', executable, ...args],
+  }
 }

@@ -5,11 +5,17 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vite-plus/test'
 import { cmdInit } from '../src/cli'
+import { commandInvocationForPlatform } from '../src/command'
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repoDir = path.resolve(packageDir, '..', '..')
-const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const packageManagerCommand = 'pnpm'
+const npmCommand = 'npm'
+
+function run(command: string, args: string[], options: Parameters<typeof execFileSync>[2]) {
+  const invocation = commandInvocationForPlatform(command, args)
+  execFileSync(invocation.command, invocation.args, options)
+}
 
 describe('tsdown initialization', () => {
   it('uses the existing project manager for its generated .gitignore', async () => {
@@ -70,23 +76,20 @@ describe('tsdown initialization', () => {
       const packageManagerOptions = {
         cwd: repoDir,
         stdio: 'inherit' as const,
-        shell: process.platform === 'win32',
       }
-      execFileSync(command, ['--dir', packageDir, 'build'], packageManagerOptions)
-      execFileSync(
-        command,
+      run(packageManagerCommand, ['--dir', packageDir, 'build'], packageManagerOptions)
+      run(
+        packageManagerCommand,
         ['--dir', path.join(repoDir, 'packages', 'swift-node-unplugin'), 'build'],
         packageManagerOptions,
       )
-      execFileSync(npmCommand, ['install', '--ignore-scripts'], {
+      run(npmCommand, ['install', '--ignore-scripts'], {
         cwd: projectDir,
         stdio: 'inherit',
-        shell: process.platform === 'win32',
       })
-      execFileSync(npmCommand, ['run', 'build'], {
+      run(npmCommand, ['run', 'build'], {
         cwd: projectDir,
         stdio: 'inherit',
-        shell: process.platform === 'win32',
       })
 
       expect(existsSync(path.join(projectDir, 'dist', 'index.d.ts'))).toBe(true)
