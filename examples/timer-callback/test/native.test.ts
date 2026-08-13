@@ -122,6 +122,51 @@ describe('timer-callback', () => {
     })
   })
 
+  describe('async Promise callbacks', () => {
+    it('awaits a JavaScript Promise before resuming Swift', async () => {
+      addon.installPromiseCallback(async (value: string) => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return value.toUpperCase()
+      })
+
+      const result = await new Promise<string>((resolve) => {
+        addon.invokeInstalledPromiseCallback('swift-node', resolve)
+      })
+
+      expect(result).toBe('SWIFT-NODE')
+      addon.clearPromiseCallback()
+    })
+
+    it('keeps concurrent Promise callbacks isolated', async () => {
+      addon.installPromiseCallback(async (value: string) => {
+        await new Promise((resolve) => setTimeout(resolve, value === 'slow' ? 15 : 1))
+        return `${value}:done`
+      })
+
+      const invoke = (value: string): Promise<string> =>
+        new Promise((resolve) => addon.invokeInstalledPromiseCallback(value, resolve))
+
+      await expect(Promise.all([invoke('slow'), invoke('fast')])).resolves.toEqual([
+        'slow:done',
+        'fast:done',
+      ])
+      addon.clearPromiseCallback()
+    })
+
+    it('propagates JavaScript Promise rejection back to Swift', async () => {
+      addon.installPromiseCallback(async () => {
+        throw new Error('handler failed')
+      })
+
+      const result = await new Promise<string>((resolve) => {
+        addon.invokeInstalledPromiseCallback('input', resolve)
+      })
+
+      expect(result).toContain('handler failed')
+      addon.clearPromiseCallback()
+    })
+  })
+
   describe('concurrent cancellable streams', () => {
     it('keeps simultaneous subscriptions isolated and closes each on completion', async () => {
       const left: string[] = []

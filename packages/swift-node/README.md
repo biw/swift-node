@@ -129,6 +129,7 @@ These are the values that an exported function can accept or return. They are no
 | `@MainActor`                                    | returns directly on Node's main thread                                                                |
 | other global actors                             | uses the Promise bridge                                                                               |
 | `@escaping (String, Int, Bool, Double) -> Void` | accepts a one-shot JavaScript callback; `String?` is also supported for an optional callback argument |
+| `@escaping (String) async throws -> String` | retains a JavaScript callback, awaits its returned Promise from any Swift task, and deterministically releases it when Swift releases the closure |
 
 ### Borrowed binary inputs
 
@@ -167,7 +168,7 @@ input-only; return `Data` or `[UInt8]` instead.
 | Overloaded exported functions                                                  | JavaScript exports have one name, but Swift overloads use the same name for several signatures | Give each exported function a distinct name                                             |
 | Raw ABI structs in `async` functions                                           | Their synchronous in-memory representation cannot cross the asynchronous boundary safely       | Mark the model `Codable`                                                                |
 | `AsyncSequence` as a stream return                                             | It is a broad protocol, not one concrete runtime representation with a stable C ABI            | Return `AsyncStream<Element>` or `AsyncThrowingStream<Element, Error>`                  |
-| Arbitrary callback shapes                                                      | Callbacks must be one-shot `@escaping (...) -> Void` functions with supported argument types   | Use a supported callback or a stream                                                    |
+| Arbitrary callback shapes                                                      | Callbacks must be one-shot `@escaping (...) -> Void`, or `@escaping (String, ...) async throws -> String`, with supported argument types | Use a supported callback or a stream |
 | `UnsafeRawBufferPointer` in an async, stream, global-actor, or callback export | The JavaScript-owned backing memory is borrowed only for the synchronous call                  | Use `Data` or `[UInt8]`                                                                 |
 
 ## Commands
