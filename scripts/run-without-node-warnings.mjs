@@ -19,8 +19,9 @@ const nodeOptions = [
 ]
   .filter(Boolean)
   .join(' ')
+const executable = process.platform === 'win32' && command === 'vp' ? 'vp.exe' : command
 
-const child = spawn(command, args, {
+const child = spawn(executable, args, {
   env: { ...process.env, NODE_OPTIONS: nodeOptions },
   stdio: 'inherit',
 })

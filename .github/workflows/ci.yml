@@ -17,10 +17,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Fail on Node warnings
-        run: node scripts/configure-node-warning-policy.mjs
-
-      - run: node scripts/check-package-versions.mjs
+      - run: node scripts/run-without-node-warnings.mjs node scripts/check-package-versions.mjs
 
   quality:
     name: Format, lint, and type check
@@ -33,11 +30,8 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Fail on Node warnings
-        run: node scripts/configure-node-warning-policy.mjs
-
-      - run: vp install
-      - run: vp check
+      - run: node scripts/run-without-node-warnings.mjs vp install
+      - run: node scripts/run-without-node-warnings.mjs vp check
 
   unit-tests:
     name: Unit Tests - ${{ matrix.platform }}
@@ -60,9 +54,6 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Fail on Node warnings
-        run: node scripts/configure-node-warning-policy.mjs
-
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@v0.4.0
@@ -70,11 +61,11 @@ jobs:
           swift-version: swift-6.3.3-release
           swift-build: 6.3.3-RELEASE
 
-      - run: vp install
-      - run: vp -C packages/swift-node pack
-      - run: vp -C packages/swift-node test
-      - run: vp -C packages/swift-node-unplugin pack
-      - run: vp -C packages/swift-node-unplugin test
+      - run: node scripts/run-without-node-warnings.mjs vp install
+      - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node pack
+      - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node test
+      - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node-unplugin pack
+      - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node-unplugin test
 
   example-hello-world:
     name: Example - Hello World - ${{ matrix.platform }}
@@ -97,9 +88,6 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Fail on Node warnings
-        run: node scripts/configure-node-warning-policy.mjs
-
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@v0.4.0
@@ -112,28 +100,28 @@ jobs:
           swiftc --version
           clang++ --version
 
-      - run: vp install
+      - run: node scripts/run-without-node-warnings.mjs vp install
 
       - name: Build SDK
         run: |
-          vp -C packages/swift-node pack
-          vp -C packages/swift-node-unplugin pack
+          node scripts/run-without-node-warnings.mjs vp -C packages/swift-node pack
+          node scripts/run-without-node-warnings.mjs vp -C packages/swift-node-unplugin pack
 
       - name: Build example
-        run: vp -C examples/hello-world run build
+        run: node scripts/run-without-node-warnings.mjs vp -C examples/hello-world run build
 
       - name: Test native addon and ESM/CJS consumers
         run: |
-          vp -C examples/hello-world test
-          vp -C examples/hello-world-consumer-esm test
-          vp -C examples/hello-world-consumer-cjs test
-          vp -C examples/hello-world-tsdown run build
-          vp -C examples/hello-world-tsdown test
-          vp -C examples/hello-world-tsdown-consumer-esm test
-          vp -C examples/hello-world-tsdown-consumer-cjs test
+          node scripts/run-without-node-warnings.mjs vp -C examples/hello-world test
+          node scripts/run-without-node-warnings.mjs vp -C examples/hello-world-consumer-esm test
+          node scripts/run-without-node-warnings.mjs vp -C examples/hello-world-consumer-cjs test
+          node scripts/run-without-node-warnings.mjs vp -C examples/hello-world-tsdown run build
+          node scripts/run-without-node-warnings.mjs vp -C examples/hello-world-tsdown test
+          node scripts/run-without-node-warnings.mjs vp -C examples/hello-world-tsdown-consumer-esm test
+          node scripts/run-without-node-warnings.mjs vp -C examples/hello-world-tsdown-consumer-cjs test
 
       - name: Test packaged install
-        run: vp test test/packaged-hello-world.test.mjs
+        run: node scripts/run-without-node-warnings.mjs vp test test/packaged-hello-world.test.mjs
 
   example-secure-storage:
     # This demo uses Apple's Security/Keychain framework and has no Linux backend.
@@ -147,9 +135,6 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Fail on Node warnings
-        run: node scripts/configure-node-warning-policy.mjs
-
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@v0.4.0
@@ -162,24 +147,24 @@ jobs:
           swiftc --version
           clang++ --version
 
-      - run: vp install
+      - run: node scripts/run-without-node-warnings.mjs vp install
 
       - name: Build SDK
-        run: vp -C packages/swift-node pack
+        run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node pack
 
       - name: Build examples
         run: |
-          vp -C examples/secure-storage run build
-          vp -C examples/secure-storage-consumer-esm run build
+          node scripts/run-without-node-warnings.mjs vp -C examples/secure-storage run build
+          node scripts/run-without-node-warnings.mjs vp -C examples/secure-storage-consumer-esm run build
 
       - name: Test native addon and ESM/CJS consumers
         run: |
-          vp -C examples/secure-storage test
-          vp -C examples/secure-storage-consumer-esm test
-          vp -C examples/secure-storage-consumer-cjs test
+          node scripts/run-without-node-warnings.mjs vp -C examples/secure-storage test
+          node scripts/run-without-node-warnings.mjs vp -C examples/secure-storage-consumer-esm test
+          node scripts/run-without-node-warnings.mjs vp -C examples/secure-storage-consumer-cjs test
 
       - name: Run ESM consumer demo
-        run: vp -C examples/secure-storage-consumer-esm run start
+        run: node scripts/run-without-node-warnings.mjs vp -C examples/secure-storage-consumer-esm run start
 
   example-timer-callback:
     name: Example - Timer Callback - ${{ matrix.platform }}
@@ -202,9 +187,6 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Fail on Node warnings
-        run: node scripts/configure-node-warning-policy.mjs
-
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@v0.4.0
@@ -217,19 +199,19 @@ jobs:
           swiftc --version
           clang++ --version
 
-      - run: vp install
+      - run: node scripts/run-without-node-warnings.mjs vp install
 
       - name: Build SDK
-        run: vp -C packages/swift-node pack
+        run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node pack
 
       - name: Build example
-        run: vp -C examples/timer-callback run build
+        run: node scripts/run-without-node-warnings.mjs vp -C examples/timer-callback run build
 
       - name: Test native addon and ESM/CJS consumers
         run: |
-          vp -C examples/timer-callback test
-          vp -C examples/timer-callback-consumer-esm test
-          vp -C examples/timer-callback-consumer-cjs test
+          node scripts/run-without-node-warnings.mjs vp -C examples/timer-callback test
+          node scripts/run-without-node-warnings.mjs vp -C examples/timer-callback-consumer-esm test
+          node scripts/run-without-node-warnings.mjs vp -C examples/timer-callback-consumer-cjs test
 
   integration-tests:
     name: Additional Integrations - ${{ matrix.platform }}
@@ -252,9 +234,6 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Fail on Node warnings
-        run: node scripts/configure-node-warning-policy.mjs
-
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@v0.4.0
@@ -267,18 +246,18 @@ jobs:
           swiftc --version
           clang++ --version
 
-      - run: vp install
+      - run: node scripts/run-without-node-warnings.mjs vp install
 
       # Example coverage is owned by the three dedicated jobs above. Keep the
       # remaining, non-example integration checks here to avoid duplicate runs.
       - name: Test `init <package-name>` and `init .` quick starts
-        run: vp test test/quickstart.test.mjs
+        run: node scripts/run-without-node-warnings.mjs vp test test/quickstart.test.mjs
 
       - name: Test oversized string handling
-        run: vp test test/oversized-string.test.mjs
+        run: node scripts/run-without-node-warnings.mjs vp test test/oversized-string.test.mjs
 
       - name: Test production bridge
-        run: vp test test/production-bridge.test.mjs
+        run: node scripts/run-without-node-warnings.mjs vp test test/production-bridge.test.mjs
 
       - name: Test packaged production bridge
-        run: vp test test/packaged-production-bridge.test.mjs
+        run: node scripts/run-without-node-warnings.mjs vp test test/packaged-production-bridge.test.mjs
