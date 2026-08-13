@@ -592,84 +592,156 @@ function generatePromiseCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftPara
   lines.push(`    void* completion_context = nullptr;`)
   lines.push(`    std::atomic<bool> settled{false};`)
   lines.push(`};`)
-  lines.push(`static void cleanup_promise_callback_data_${prefix}(PromiseCallbackData_${prefix}* data) {`)
+  lines.push(
+    `static void cleanup_promise_callback_data_${prefix}(PromiseCallbackData_${prefix}* data) {`,
+  )
   lines.push(`    if (!data) return;`)
   for (let i = 0; i < callbackParams.length; i++) {
     lines.push(`    free(data->arg${i});`)
   }
   lines.push(`    delete data;`)
   lines.push(`}`)
-  lines.push(`static void settle_promise_callback_${prefix}(PromiseResolution_${prefix}* resolution, const char* value, size_t value_len, const char* error, size_t error_len) {`)
+  lines.push(
+    `static void settle_promise_callback_${prefix}(PromiseResolution_${prefix}* resolution, const char* value, size_t value_len, const char* error, size_t error_len) {`,
+  )
   lines.push(`    if (!resolution || resolution->settled.exchange(true)) return;`)
-  lines.push(`    resolution->complete(resolution->completion_context, value, static_cast<int64_t>(value_len), error, static_cast<int64_t>(error_len));`)
+  lines.push(
+    `    resolution->complete(resolution->completion_context, value, static_cast<int64_t>(value_len), error, static_cast<int64_t>(error_len));`,
+  )
   lines.push(`    delete resolution;`)
   lines.push(`}`)
-  lines.push(`static napi_value resolve_promise_callback_${prefix}(napi_env env, napi_callback_info info) {`)
+  lines.push(
+    `static napi_value resolve_promise_callback_${prefix}(napi_env env, napi_callback_info info) {`,
+  )
   lines.push(`    size_t argc = 1; napi_value argv[1]; void* raw = nullptr;`)
-  lines.push(`    if (napi_get_cb_info(env, info, &argc, argv, nullptr, &raw) != napi_ok) return nullptr;`)
+  lines.push(
+    `    if (napi_get_cb_info(env, info, &argc, argv, nullptr, &raw) != napi_ok) return nullptr;`,
+  )
   lines.push(`    auto* resolution = static_cast<PromiseResolution_${prefix}*>(raw);`)
   lines.push(`    if (!resolution) return nullptr;`)
-  lines.push(`    if (argc != 1) { const char* error = "JavaScript callback resolved without a value"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`)
+  lines.push(
+    `    if (argc != 1) { const char* error = "JavaScript callback resolved without a value"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
   lines.push(`    napi_valuetype type;`)
-  lines.push(`    if (napi_typeof(env, argv[0], &type) != napi_ok || type != napi_string) { const char* error = "JavaScript callback must resolve to a string"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`)
+  lines.push(
+    `    if (napi_typeof(env, argv[0], &type) != napi_ok || type != napi_string) { const char* error = "JavaScript callback must resolve to a string"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
   lines.push(`    size_t length = 0;`)
-  lines.push(`    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &length) != napi_ok) { const char* error = "Could not read JavaScript callback result"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`)
+  lines.push(
+    `    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &length) != napi_ok) { const char* error = "Could not read JavaScript callback result"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
   lines.push(`    std::string value(length, '\\0');`)
-  lines.push(`    if (length > 0 && napi_get_value_string_utf8(env, argv[0], value.data(), length + 1, &length) != napi_ok) { const char* error = "Could not read JavaScript callback result"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`)
-  lines.push(`    settle_promise_callback_${prefix}(resolution, value.data(), length, nullptr, 0); return nullptr;`)
+  lines.push(
+    `    if (length > 0 && napi_get_value_string_utf8(env, argv[0], value.data(), length + 1, &length) != napi_ok) { const char* error = "Could not read JavaScript callback result"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
+  lines.push(
+    `    settle_promise_callback_${prefix}(resolution, value.data(), length, nullptr, 0); return nullptr;`,
+  )
   lines.push(`}`)
-  lines.push(`static napi_value reject_promise_callback_${prefix}(napi_env env, napi_callback_info info) {`)
+  lines.push(
+    `static napi_value reject_promise_callback_${prefix}(napi_env env, napi_callback_info info) {`,
+  )
   lines.push(`    size_t argc = 1; napi_value argv[1]; void* raw = nullptr;`)
-  lines.push(`    if (napi_get_cb_info(env, info, &argc, argv, nullptr, &raw) != napi_ok) return nullptr;`)
+  lines.push(
+    `    if (napi_get_cb_info(env, info, &argc, argv, nullptr, &raw) != napi_ok) return nullptr;`,
+  )
   lines.push(`    auto* resolution = static_cast<PromiseResolution_${prefix}*>(raw);`)
   lines.push(`    if (!resolution) return nullptr;`)
   lines.push(`    const char* fallback = "JavaScript callback rejected";`)
-  lines.push(`    if (argc != 1) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`)
+  lines.push(
+    `    if (argc != 1) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
   lines.push(`    napi_value text;`)
-  lines.push(`    if (napi_coerce_to_string(env, argv[0], &text) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`)
+  lines.push(
+    `    if (napi_coerce_to_string(env, argv[0], &text) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
   lines.push(`    size_t length = 0;`)
-  lines.push(`    if (napi_get_value_string_utf8(env, text, nullptr, 0, &length) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`)
+  lines.push(
+    `    if (napi_get_value_string_utf8(env, text, nullptr, 0, &length) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
   lines.push(`    std::string error(length, '\\0');`)
-  lines.push(`    if (length > 0 && napi_get_value_string_utf8(env, text, error.data(), length + 1, &length) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`)
-  lines.push(`    settle_promise_callback_${prefix}(resolution, nullptr, 0, error.data(), length); return nullptr;`)
+  lines.push(
+    `    if (length > 0 && napi_get_value_string_utf8(env, text, error.data(), length + 1, &length) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
+  lines.push(
+    `    settle_promise_callback_${prefix}(resolution, nullptr, 0, error.data(), length); return nullptr;`,
+  )
   lines.push(`}`)
-  lines.push(`static void call_js_${prefix}(napi_env env, napi_value js_callback, void*, void* raw) {`)
+  lines.push(
+    `static void call_js_${prefix}(napi_env env, napi_value js_callback, void*, void* raw) {`,
+  )
   lines.push(`    auto* data = static_cast<PromiseCallbackData_${prefix}*>(raw);`)
   lines.push(`    if (!data) return;`)
   lines.push(`    auto* resolution = new PromiseResolution_${prefix}();`)
-  lines.push(`    resolution->complete = data->complete; resolution->completion_context = data->completion_context;`)
-  lines.push(`    if (!env) { const char* error = "JavaScript environment was released"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`)
+  lines.push(
+    `    resolution->complete = data->complete; resolution->completion_context = data->completion_context;`,
+  )
+  lines.push(
+    `    if (!env) { const char* error = "JavaScript environment was released"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
   lines.push(`    napi_value global;`)
   lines.push(`    napi_value argv[${Math.max(callbackParams.length, 1)}];`)
-  lines.push(`    if (napi_get_global(env, &global) != napi_ok) { const char* error = "Could not read JavaScript global object"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`)
+  lines.push(
+    `    if (napi_get_global(env, &global) != napi_ok) { const char* error = "Could not read JavaScript global object"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
   for (let i = 0; i < callbackParams.length; i++) {
-    lines.push(`    if (!swift_node_napi_ok(env, swift_node_create_string(env, data->arg${i}, data->arg${i}_len, &argv[${i}]), "Failed to create Promise callback argument")) { const char* error = "Could not create JavaScript callback argument"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`)
+    lines.push(
+      `    if (!swift_node_napi_ok(env, swift_node_create_string(env, data->arg${i}, data->arg${i}_len, &argv[${i}]), "Failed to create Promise callback argument")) { const char* error = "Could not create JavaScript callback argument"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+    )
   }
   lines.push(`    napi_value result;`)
-  lines.push(`    napi_status call_status = napi_call_function(env, global, js_callback, ${callbackParams.length}, argv, &result);`)
+  lines.push(
+    `    napi_status call_status = napi_call_function(env, global, js_callback, ${callbackParams.length}, argv, &result);`,
+  )
   lines.push(`    cleanup_promise_callback_data_${prefix}(data);`)
-  lines.push(`    if (call_status != napi_ok) { napi_value ignored; napi_get_and_clear_last_exception(env, &ignored); const char* error = "JavaScript callback threw"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`)
+  lines.push(
+    `    if (call_status != napi_ok) { napi_value ignored; napi_get_and_clear_last_exception(env, &ignored); const char* error = "JavaScript callback threw"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
   lines.push(`    napi_value promise_constructor; napi_value resolve; napi_value promise;`)
-  lines.push(`    if (napi_get_named_property(env, global, "Promise", &promise_constructor) != napi_ok || napi_get_named_property(env, promise_constructor, "resolve", &resolve) != napi_ok || napi_call_function(env, promise_constructor, resolve, 1, &result, &promise) != napi_ok) { const char* error = "Could not await JavaScript callback"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`)
-  lines.push(`    napi_value then; napi_value fulfilled; napi_value rejected; napi_value handlers[2];`)
-  lines.push(`    if (napi_get_named_property(env, promise, "then", &then) != napi_ok || napi_create_function(env, "swift_node_promise_fulfilled", NAPI_AUTO_LENGTH, resolve_promise_callback_${prefix}, resolution, &fulfilled) != napi_ok || napi_create_function(env, "swift_node_promise_rejected", NAPI_AUTO_LENGTH, reject_promise_callback_${prefix}, resolution, &rejected) != napi_ok) { const char* error = "Could not attach JavaScript Promise handlers"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`)
+  lines.push(
+    `    if (napi_get_named_property(env, global, "Promise", &promise_constructor) != napi_ok || napi_get_named_property(env, promise_constructor, "resolve", &resolve) != napi_ok || napi_call_function(env, promise_constructor, resolve, 1, &result, &promise) != napi_ok) { const char* error = "Could not await JavaScript callback"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(
+    `    napi_value then; napi_value fulfilled; napi_value rejected; napi_value handlers[2];`,
+  )
+  lines.push(
+    `    if (napi_get_named_property(env, promise, "then", &then) != napi_ok || napi_create_function(env, "swift_node_promise_fulfilled", NAPI_AUTO_LENGTH, resolve_promise_callback_${prefix}, resolution, &fulfilled) != napi_ok || napi_create_function(env, "swift_node_promise_rejected", NAPI_AUTO_LENGTH, reject_promise_callback_${prefix}, resolution, &rejected) != napi_ok) { const char* error = "Could not attach JavaScript Promise handlers"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
   lines.push(`    handlers[0] = fulfilled; handlers[1] = rejected;`)
-  lines.push(`    if (napi_call_function(env, promise, then, 2, handlers, nullptr) != napi_ok) { napi_value ignored; napi_get_and_clear_last_exception(env, &ignored); const char* error = "Could not await JavaScript callback"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`)
+  lines.push(
+    `    if (napi_call_function(env, promise, then, 2, handlers, nullptr) != napi_ok) { napi_value ignored; napi_get_and_clear_last_exception(env, &ignored); const char* error = "Could not await JavaScript callback"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
   lines.push(`}`)
   const trampolineParams = callbackParams
     .flatMap((_, index) => [`const char* arg${index}`, `int64_t arg${index}_len`])
     .join(', ')
-  lines.push(`static void trampoline_${prefix}(void* callback_context${trampolineParams ? `, ${trampolineParams}` : ''}, void (*complete)(void*, const char*, int64_t, const char*, int64_t), void* completion_context) {`)
+  lines.push(
+    `static void trampoline_${prefix}(void* callback_context${trampolineParams ? `, ${trampolineParams}` : ''}, void (*complete)(void*, const char*, int64_t, const char*, int64_t), void* completion_context) {`,
+  )
   lines.push(`    auto* state = static_cast<CallbackState_${prefix}*>(callback_context);`)
-  lines.push(`    if (!state || state->released.load() || napi_acquire_threadsafe_function(state->tsfn) != napi_ok) { const char* error = "JavaScript callback is unavailable"; complete(completion_context, nullptr, 0, error, strlen(error)); return; }`)
-  lines.push(`    auto* data = new PromiseCallbackData_${prefix}(); data->complete = complete; data->completion_context = completion_context;`)
+  lines.push(
+    `    if (!state || state->released.load() || napi_acquire_threadsafe_function(state->tsfn) != napi_ok) { const char* error = "JavaScript callback is unavailable"; complete(completion_context, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(
+    `    auto* data = new PromiseCallbackData_${prefix}(); data->complete = complete; data->completion_context = completion_context;`,
+  )
   for (let i = 0; i < callbackParams.length; i++) {
-    lines.push(`    data->arg${i}_len = static_cast<size_t>(arg${i}_len); data->arg${i} = arg${i} ? static_cast<char*>(malloc(data->arg${i}_len + 1)) : nullptr;`)
-    lines.push(`    if (arg${i} && !data->arg${i}) { const char* error = "Out of memory"; cleanup_promise_callback_data_${prefix}(data); complete(completion_context, nullptr, 0, error, strlen(error)); napi_release_threadsafe_function(state->tsfn, napi_tsfn_release); return; }`)
-    lines.push(`    if (arg${i}) { memcpy(data->arg${i}, arg${i}, data->arg${i}_len); data->arg${i}[data->arg${i}_len] = '\\0'; }`)
+    lines.push(
+      `    data->arg${i}_len = static_cast<size_t>(arg${i}_len); data->arg${i} = arg${i} ? static_cast<char*>(malloc(data->arg${i}_len + 1)) : nullptr;`,
+    )
+    lines.push(
+      `    if (arg${i} && !data->arg${i}) { const char* error = "Out of memory"; cleanup_promise_callback_data_${prefix}(data); complete(completion_context, nullptr, 0, error, strlen(error)); napi_release_threadsafe_function(state->tsfn, napi_tsfn_release); return; }`,
+    )
+    lines.push(
+      `    if (arg${i}) { memcpy(data->arg${i}, arg${i}, data->arg${i}_len); data->arg${i}[data->arg${i}_len] = '\\0'; }`,
+    )
   }
-  lines.push(`    napi_status status = napi_call_threadsafe_function(state->tsfn, data, napi_tsfn_nonblocking);`)
-  lines.push(`    if (status != napi_ok) { const char* error = "Could not schedule JavaScript callback"; cleanup_promise_callback_data_${prefix}(data); complete(completion_context, nullptr, 0, error, strlen(error)); }`)
+  lines.push(
+    `    napi_status status = napi_call_threadsafe_function(state->tsfn, data, napi_tsfn_nonblocking);`,
+  )
+  lines.push(
+    `    if (status != napi_ok) { const char* error = "Could not schedule JavaScript callback"; cleanup_promise_callback_data_${prefix}(data); complete(completion_context, nullptr, 0, error, strlen(error)); }`,
+  )
   lines.push(`    napi_release_threadsafe_function(state->tsfn, napi_tsfn_release);`)
   lines.push(`}`)
 
@@ -1370,7 +1442,9 @@ function generateAsyncWrapper(fn: SwiftFunction): string {
 function generateCallbackWrapper(fn: SwiftFunction): string {
   const jsP = jsParams(fn)
   const retCat = classifySwiftType(fn.returnType)
-  const hasError = fn.params.some((p) => p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>'))
+  const hasError = fn.params.some((p) =>
+    p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>'),
+  )
   const hasStringResultLength = fn.params.some((p) => p.bridgeStringResultLength)
   const prefix = fn.symbolName
   const nonCbParams = jsP.filter((p) => !isCallbackType(p.type))
@@ -2341,48 +2415,72 @@ private func swiftNodeStreamComplete(
 }`
 }
 
-function generatePromiseCallbackSwiftRuntime(fn: ExportedFunction, parameter: ExportedFunction['params'][number]): string {
+function generatePromiseCallbackSwiftRuntime(
+  fn: ExportedFunction,
+  parameter: ExportedFunction['params'][number],
+): string {
   const info = promiseCallbackInfo(parameter.type)
   if (!info) return ''
 
   const prefix = `${sanitizeId(fn.name)}_${sanitizeId(parameter.name)}`
-  const cParameters = info.params
-    .flatMap(() => ['UnsafePointer<CChar>', 'Int'])
-    .join(', ')
-  const closureParameters = info.params.map((_, index) => `callbackArg${index}`).join(', ')
+  const cParameters = info.params.flatMap(() => ['UnsafePointer<CChar>', 'Int']).join(', ')
   const lines: string[] = []
 
-  lines.push(`public typealias SwiftNodePromiseCompletion_${prefix} = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> Void`)
-  lines.push(`public typealias SwiftNodePromiseInvoke_${prefix} = @convention(c) (UnsafeMutableRawPointer?${cParameters ? `, ${cParameters}` : ''}, SwiftNodePromiseCompletion_${prefix}, UnsafeMutableRawPointer?) -> Void`)
-  lines.push(`public typealias SwiftNodePromiseRelease_${prefix} = @convention(c) (UnsafeMutableRawPointer?) -> Void`)
+  lines.push(
+    `public typealias SwiftNodePromiseCompletion_${prefix} = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> Void`,
+  )
+  lines.push(
+    `public typealias SwiftNodePromiseInvoke_${prefix} = @convention(c) (UnsafeMutableRawPointer?${cParameters ? `, ${cParameters}` : ''}, SwiftNodePromiseCompletion_${prefix}, UnsafeMutableRawPointer?) -> Void`,
+  )
+  lines.push(
+    `public typealias SwiftNodePromiseRelease_${prefix} = @convention(c) (UnsafeMutableRawPointer?) -> Void`,
+  )
   lines.push(`private final class SwiftNodePromiseContinuation_${prefix}: @unchecked Sendable {`)
   lines.push(`    private let lock = NSLock()`)
   lines.push(`    private var continuation: CheckedContinuation<String, Error>?`)
-  lines.push(`    init(_ continuation: CheckedContinuation<String, Error>) { self.continuation = continuation }`)
-  lines.push(`    func resume(_ value: UnsafePointer<CChar>?, _ valueLength: Int, _ error: UnsafePointer<CChar>?, _ errorLength: Int) {`)
+  lines.push(
+    `    init(_ continuation: CheckedContinuation<String, Error>) { self.continuation = continuation }`,
+  )
+  lines.push(
+    `    func resume(_ value: UnsafePointer<CChar>?, _ valueLength: Int, _ error: UnsafePointer<CChar>?, _ errorLength: Int) {`,
+  )
   lines.push(`        lock.lock()`)
   lines.push(`        let continuation = self.continuation`)
   lines.push(`        self.continuation = nil`)
   lines.push(`        lock.unlock()`)
   lines.push(`        guard let continuation else { return }`)
-  lines.push(`        if let error { continuation.resume(throwing: NSError(domain: "swift-node", code: 1, userInfo: [NSLocalizedDescriptionKey: swiftNodeDecodeUTF8(error, errorLength)])); return }`)
-  lines.push(`        guard let value else { continuation.resume(throwing: NSError(domain: "swift-node", code: 1, userInfo: [NSLocalizedDescriptionKey: "JavaScript callback resolved without a value"])); return }`)
+  lines.push(
+    `        if let error { continuation.resume(throwing: NSError(domain: "swift-node", code: 1, userInfo: [NSLocalizedDescriptionKey: swiftNodeDecodeUTF8(error, errorLength)])); return }`,
+  )
+  lines.push(
+    `        guard let value else { continuation.resume(throwing: NSError(domain: "swift-node", code: 1, userInfo: [NSLocalizedDescriptionKey: "JavaScript callback resolved without a value"])); return }`,
+  )
   lines.push(`        continuation.resume(returning: swiftNodeDecodeUTF8(value, valueLength))`)
   lines.push(`    }`)
   lines.push(`}`)
-  lines.push(`private func swiftNodePromiseComplete_${prefix}(_ context: UnsafeMutableRawPointer?, _ value: UnsafePointer<CChar>?, _ valueLength: Int, _ error: UnsafePointer<CChar>?, _ errorLength: Int) {`)
+  lines.push(
+    `private func swiftNodePromiseComplete_${prefix}(_ context: UnsafeMutableRawPointer?, _ value: UnsafePointer<CChar>?, _ valueLength: Int, _ error: UnsafePointer<CChar>?, _ errorLength: Int) {`,
+  )
   lines.push(`    guard let context else { return }`)
-  lines.push(`    Unmanaged<SwiftNodePromiseContinuation_${prefix}>.fromOpaque(context).takeRetainedValue().resume(value, valueLength, error, errorLength)`)
+  lines.push(
+    `    Unmanaged<SwiftNodePromiseContinuation_${prefix}>.fromOpaque(context).takeRetainedValue().resume(value, valueLength, error, errorLength)`,
+  )
   lines.push(`}`)
   lines.push(`private final class SwiftNodePromiseHandler_${prefix}: @unchecked Sendable {`)
   lines.push(`    let invoke: SwiftNodePromiseInvoke_${prefix}`)
   lines.push(`    let context: UnsafeMutableRawPointer?`)
   lines.push(`    let release: SwiftNodePromiseRelease_${prefix}`)
-  lines.push(`    init(invoke: @escaping SwiftNodePromiseInvoke_${prefix}, context: UnsafeMutableRawPointer?, release: @escaping SwiftNodePromiseRelease_${prefix}) { self.invoke = invoke; self.context = context; self.release = release }`)
+  lines.push(
+    `    init(invoke: @escaping SwiftNodePromiseInvoke_${prefix}, context: UnsafeMutableRawPointer?, release: @escaping SwiftNodePromiseRelease_${prefix}) { self.invoke = invoke; self.context = context; self.release = release }`,
+  )
   lines.push(`    deinit { release(context) }`)
-  lines.push(`    func call(${info.params.map((_, index) => `_ callbackArg${index}: String`).join(', ')}) async throws -> String {`)
+  lines.push(
+    `    func call(${info.params.map((_, index) => `_ callbackArg${index}: String`).join(', ')}) async throws -> String {`,
+  )
   lines.push(`        try await withCheckedThrowingContinuation { continuation in`)
-  lines.push(`            let pending = Unmanaged.passRetained(SwiftNodePromiseContinuation_${prefix}(continuation)).toOpaque()`)
+  lines.push(
+    `            let pending = Unmanaged.passRetained(SwiftNodePromiseContinuation_${prefix}(continuation)).toOpaque()`,
+  )
   if (info.params.length === 0) {
     lines.push(`            invoke(context, swiftNodePromiseComplete_${prefix}, pending)`)
   } else {

@@ -13,7 +13,6 @@ import {
   isEscapingCallback,
   parseCallbackType,
   parseSwiftStreamReturnType,
-  splitParams,
 } from './parser.js'
 import { cppIdentifier } from './generator.js'
 
