@@ -9,6 +9,7 @@ import {
   SwiftParam,
   SwiftStruct,
   SwiftStructField,
+  PromiseCallbackInfo,
   bridgeTransportForType,
   classifySwiftType,
   SwiftTypeCategory,
@@ -329,6 +330,10 @@ function tsCallbackType(swiftType: string): string {
     return `arg${i}: ${tsT}`
   })
 
+  if (cb.isAsync && cb.throws && cb.returnType === 'String') {
+    return `(${params.join(', ')}) => string | Promise<string>`
+  }
+
   return `(${params.join(', ')}) => void`
 }
 
@@ -345,13 +350,27 @@ function jsParams(fn: SwiftFunction): SwiftParam[] {
       !p.bridgeStringLengthFor &&
       !p.bridgeStringResultLength &&
       !p.bridgeBorrowedBufferLengthFor &&
-      !p.callbackContext,
+      !p.callbackContext &&
+      !p.promiseCallbackRelease,
   )
 }
 
 // Check if function has a callback parameter
 function getCallbackParam(fn: SwiftFunction): SwiftParam | null {
   return fn.params.find((p) => isCallbackType(p.type)) || null
+}
+
+function promiseCallbackInfo(type: string): PromiseCallbackInfo | null {
+  const callback = parseCallbackType(type)
+  if (!callback || !callback.isAsync || !callback.throws || callback.returnType !== 'String') {
+    return null
+  }
+
+  if (callback.params.some((parameter) => parameter.swiftType.replace(/\s+/g, '') !== 'String')) {
+    return null
+  }
+
+  return { params: callback.params, returnType: callback.returnType }
 }
 
 // --- Bridge header generation ---
@@ -471,6 +490,20 @@ export function generateBridgeH(
         if (p.type.includes('UnsafeMutablePointer<CChar>')) {
           return `char* ${paramName}`
         }
+        if (p.promiseCallback) {
+          const callbackParams = p.promiseCallback.params
+            .flatMap((parameter) => {
+              const type = parameter.swiftType
+              return classifyNativeSwiftType(type) === 'string'
+                ? [`const char*`, 'int64_t']
+                : [cppType(type)]
+            })
+            .join(', ')
+          return `void (*${paramName})(void*, ${callbackParams}${callbackParams ? ', ' : ''}void (*)(void*, const char*, int64_t, const char*, int64_t), void*)`
+        }
+        if (p.promiseCallbackRelease) {
+          return `void (*${paramName})(void*)`
+        }
         if (isCallbackType(p.type)) {
           // Generate the C callback function pointer signature
           const cb = parseCallbackType(p.type)
@@ -511,7 +544,212 @@ function callbackParamCategory(type: string): SwiftTypeCategory {
   return generated === 'unknown' ? classifyNativeSwiftType(type) : generated
 }
 
+function generatePromiseCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftParam): string {
+  const info = cbParam.promiseCallback
+  if (!info) return ''
+
+  const lines: string[] = []
+  const prefix = fn.symbolName
+  const callbackParams = info.params
+
+  lines.push(
+    `struct CallbackState_${prefix} { napi_env env = nullptr; napi_threadsafe_function tsfn = nullptr; std::atomic<bool> released{false}; };`,
+  )
+  lines.push(`static std::mutex callbacks_mutex_${prefix};`)
+  lines.push(`static std::unordered_set<CallbackState_${prefix}*> callbacks_${prefix};`)
+  lines.push(`static void finalize_callback_${prefix}(napi_env, void* data, void*) {`)
+  lines.push(`    auto* state = static_cast<CallbackState_${prefix}*>(data);`)
+  lines.push(`    if (!state) return;`)
+  lines.push(
+    `    { std::lock_guard<std::mutex> lock(callbacks_mutex_${prefix}); callbacks_${prefix}.erase(state); }`,
+  )
+  lines.push(`    delete state;`)
+  lines.push(`}`)
+  lines.push(`static void cleanup_callbacks_${prefix}(void*) {`)
+  lines.push(`    std::vector<CallbackState_${prefix}*> states;`)
+  lines.push(
+    `    { std::lock_guard<std::mutex> lock(callbacks_mutex_${prefix}); states.assign(callbacks_${prefix}.begin(), callbacks_${prefix}.end()); }`,
+  )
+  lines.push(
+    `    for (auto* state : states) { if (!state->released.exchange(true)) napi_release_threadsafe_function(state->tsfn, napi_tsfn_abort); }`,
+  )
+  lines.push(`}`)
+  lines.push(`static void release_callback_${prefix}(void* callback_context) {`)
+  lines.push(`    auto* state = static_cast<CallbackState_${prefix}*>(callback_context);`)
+  lines.push(`    if (!state || state->released.exchange(true)) return;`)
+  lines.push(`    napi_release_threadsafe_function(state->tsfn, napi_tsfn_abort);`)
+  lines.push(`}`)
+  lines.push(`struct PromiseCallbackData_${prefix} {`)
+  for (let i = 0; i < callbackParams.length; i++) {
+    lines.push(`    char* arg${i} = nullptr;`)
+    lines.push(`    size_t arg${i}_len = 0;`)
+  }
+  lines.push(`    void (*complete)(void*, const char*, int64_t, const char*, int64_t) = nullptr;`)
+  lines.push(`    void* completion_context = nullptr;`)
+  lines.push(`};`)
+  lines.push(`struct PromiseResolution_${prefix} {`)
+  lines.push(`    void (*complete)(void*, const char*, int64_t, const char*, int64_t) = nullptr;`)
+  lines.push(`    void* completion_context = nullptr;`)
+  lines.push(`    std::atomic<bool> settled{false};`)
+  lines.push(`};`)
+  lines.push(
+    `static void cleanup_promise_callback_data_${prefix}(PromiseCallbackData_${prefix}* data) {`,
+  )
+  lines.push(`    if (!data) return;`)
+  for (let i = 0; i < callbackParams.length; i++) {
+    lines.push(`    free(data->arg${i});`)
+  }
+  lines.push(`    delete data;`)
+  lines.push(`}`)
+  lines.push(
+    `static void settle_promise_callback_${prefix}(PromiseResolution_${prefix}* resolution, const char* value, size_t value_len, const char* error, size_t error_len) {`,
+  )
+  lines.push(`    if (!resolution || resolution->settled.exchange(true)) return;`)
+  lines.push(
+    `    resolution->complete(resolution->completion_context, value, static_cast<int64_t>(value_len), error, static_cast<int64_t>(error_len));`,
+  )
+  lines.push(`    delete resolution;`)
+  lines.push(`}`)
+  lines.push(
+    `static napi_value resolve_promise_callback_${prefix}(napi_env env, napi_callback_info info) {`,
+  )
+  lines.push(`    size_t argc = 1; napi_value argv[1]; void* raw = nullptr;`)
+  lines.push(
+    `    if (napi_get_cb_info(env, info, &argc, argv, nullptr, &raw) != napi_ok) return nullptr;`,
+  )
+  lines.push(`    auto* resolution = static_cast<PromiseResolution_${prefix}*>(raw);`)
+  lines.push(`    if (!resolution) return nullptr;`)
+  lines.push(
+    `    if (argc != 1) { const char* error = "JavaScript callback resolved without a value"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
+  lines.push(`    napi_valuetype type;`)
+  lines.push(
+    `    if (napi_typeof(env, argv[0], &type) != napi_ok || type != napi_string) { const char* error = "JavaScript callback must resolve to a string"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
+  lines.push(`    size_t length = 0;`)
+  lines.push(
+    `    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &length) != napi_ok) { const char* error = "Could not read JavaScript callback result"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
+  lines.push(`    std::string value(length, '\\0');`)
+  lines.push(
+    `    if (length > 0 && napi_get_value_string_utf8(env, argv[0], value.data(), length + 1, &length) != napi_ok) { const char* error = "Could not read JavaScript callback result"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return nullptr; }`,
+  )
+  lines.push(
+    `    settle_promise_callback_${prefix}(resolution, value.data(), length, nullptr, 0); return nullptr;`,
+  )
+  lines.push(`}`)
+  lines.push(
+    `static napi_value reject_promise_callback_${prefix}(napi_env env, napi_callback_info info) {`,
+  )
+  lines.push(`    size_t argc = 1; napi_value argv[1]; void* raw = nullptr;`)
+  lines.push(
+    `    if (napi_get_cb_info(env, info, &argc, argv, nullptr, &raw) != napi_ok) return nullptr;`,
+  )
+  lines.push(`    auto* resolution = static_cast<PromiseResolution_${prefix}*>(raw);`)
+  lines.push(`    if (!resolution) return nullptr;`)
+  lines.push(`    const char* fallback = "JavaScript callback rejected";`)
+  lines.push(
+    `    if (argc != 1) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
+  lines.push(`    napi_value text;`)
+  lines.push(
+    `    if (napi_coerce_to_string(env, argv[0], &text) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
+  lines.push(`    size_t length = 0;`)
+  lines.push(
+    `    if (napi_get_value_string_utf8(env, text, nullptr, 0, &length) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
+  lines.push(`    std::string error(length, '\\0');`)
+  lines.push(
+    `    if (length > 0 && napi_get_value_string_utf8(env, text, error.data(), length + 1, &length) != napi_ok) { settle_promise_callback_${prefix}(resolution, nullptr, 0, fallback, strlen(fallback)); return nullptr; }`,
+  )
+  lines.push(
+    `    settle_promise_callback_${prefix}(resolution, nullptr, 0, error.data(), length); return nullptr;`,
+  )
+  lines.push(`}`)
+  lines.push(
+    `static void call_js_${prefix}(napi_env env, napi_value js_callback, void*, void* raw) {`,
+  )
+  lines.push(`    auto* data = static_cast<PromiseCallbackData_${prefix}*>(raw);`)
+  lines.push(`    if (!data) return;`)
+  lines.push(`    auto* resolution = new PromiseResolution_${prefix}();`)
+  lines.push(
+    `    resolution->complete = data->complete; resolution->completion_context = data->completion_context;`,
+  )
+  lines.push(
+    `    if (!env) { const char* error = "JavaScript environment was released"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(`    napi_value global;`)
+  lines.push(`    napi_value argv[${Math.max(callbackParams.length, 1)}];`)
+  lines.push(
+    `    if (napi_get_global(env, &global) != napi_ok) { const char* error = "Could not read JavaScript global object"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  for (let i = 0; i < callbackParams.length; i++) {
+    lines.push(
+      `    if (!swift_node_napi_ok(env, swift_node_create_string(env, data->arg${i}, data->arg${i}_len, &argv[${i}]), "Failed to create Promise callback argument")) { const char* error = "Could not create JavaScript callback argument"; cleanup_promise_callback_data_${prefix}(data); settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+    )
+  }
+  lines.push(`    napi_value result;`)
+  lines.push(
+    `    napi_status call_status = napi_call_function(env, global, js_callback, ${callbackParams.length}, argv, &result);`,
+  )
+  lines.push(`    cleanup_promise_callback_data_${prefix}(data);`)
+  lines.push(
+    `    if (call_status != napi_ok) { napi_value ignored; napi_get_and_clear_last_exception(env, &ignored); const char* error = "JavaScript callback threw"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(`    napi_value promise_constructor; napi_value resolve; napi_value promise;`)
+  lines.push(
+    `    if (napi_get_named_property(env, global, "Promise", &promise_constructor) != napi_ok || napi_get_named_property(env, promise_constructor, "resolve", &resolve) != napi_ok || napi_call_function(env, promise_constructor, resolve, 1, &result, &promise) != napi_ok) { const char* error = "Could not await JavaScript callback"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(
+    `    napi_value then; napi_value fulfilled; napi_value rejected; napi_value handlers[2];`,
+  )
+  lines.push(
+    `    if (napi_get_named_property(env, promise, "then", &then) != napi_ok || napi_create_function(env, "swift_node_promise_fulfilled", NAPI_AUTO_LENGTH, resolve_promise_callback_${prefix}, resolution, &fulfilled) != napi_ok || napi_create_function(env, "swift_node_promise_rejected", NAPI_AUTO_LENGTH, reject_promise_callback_${prefix}, resolution, &rejected) != napi_ok) { const char* error = "Could not attach JavaScript Promise handlers"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(`    handlers[0] = fulfilled; handlers[1] = rejected;`)
+  lines.push(
+    `    if (napi_call_function(env, promise, then, 2, handlers, nullptr) != napi_ok) { napi_value ignored; napi_get_and_clear_last_exception(env, &ignored); const char* error = "Could not await JavaScript callback"; settle_promise_callback_${prefix}(resolution, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(`}`)
+  const trampolineParams = callbackParams
+    .flatMap((_, index) => [`const char* arg${index}`, `int64_t arg${index}_len`])
+    .join(', ')
+  lines.push(
+    `static void trampoline_${prefix}(void* callback_context${trampolineParams ? `, ${trampolineParams}` : ''}, void (*complete)(void*, const char*, int64_t, const char*, int64_t), void* completion_context) {`,
+  )
+  lines.push(`    auto* state = static_cast<CallbackState_${prefix}*>(callback_context);`)
+  lines.push(
+    `    if (!state || state->released.load() || napi_acquire_threadsafe_function(state->tsfn) != napi_ok) { const char* error = "JavaScript callback is unavailable"; complete(completion_context, nullptr, 0, error, strlen(error)); return; }`,
+  )
+  lines.push(
+    `    auto* data = new PromiseCallbackData_${prefix}(); data->complete = complete; data->completion_context = completion_context;`,
+  )
+  for (let i = 0; i < callbackParams.length; i++) {
+    lines.push(
+      `    data->arg${i}_len = static_cast<size_t>(arg${i}_len); data->arg${i} = arg${i} ? static_cast<char*>(malloc(data->arg${i}_len + 1)) : nullptr;`,
+    )
+    lines.push(
+      `    if (arg${i} && !data->arg${i}) { const char* error = "Out of memory"; cleanup_promise_callback_data_${prefix}(data); complete(completion_context, nullptr, 0, error, strlen(error)); napi_release_threadsafe_function(state->tsfn, napi_tsfn_release); return; }`,
+    )
+    lines.push(
+      `    if (arg${i}) { memcpy(data->arg${i}, arg${i}, data->arg${i}_len); data->arg${i}[data->arg${i}_len] = '\\0'; }`,
+    )
+  }
+  lines.push(
+    `    napi_status status = napi_call_threadsafe_function(state->tsfn, data, napi_tsfn_nonblocking);`,
+  )
+  lines.push(
+    `    if (status != napi_ok) { const char* error = "Could not schedule JavaScript callback"; cleanup_promise_callback_data_${prefix}(data); complete(completion_context, nullptr, 0, error, strlen(error)); }`,
+  )
+  lines.push(`    napi_release_threadsafe_function(state->tsfn, napi_tsfn_release);`)
+  lines.push(`}`)
+
+  return lines.join('\n')
+}
+
 function generateCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftParam): string {
+  if (cbParam.promiseCallback) return generatePromiseCallbackTrampoline(fn, cbParam)
   const cb = parseCallbackType(cbParam.nativeType || cbParam.type)
   if (!cb) return ''
 
@@ -1204,6 +1442,10 @@ function generateAsyncWrapper(fn: SwiftFunction): string {
 function generateCallbackWrapper(fn: SwiftFunction): string {
   const jsP = jsParams(fn)
   const retCat = classifySwiftType(fn.returnType)
+  const hasError = fn.params.some((p) =>
+    p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>'),
+  )
+  const hasStringResultLength = fn.params.some((p) => p.bridgeStringResultLength)
   const prefix = fn.symbolName
   const nonCbParams = jsP.filter((p) => !isCallbackType(p.type))
   const stringParams = nonCbParams.filter((p) => classifySwiftType(p.type) === 'string')
@@ -1358,11 +1600,16 @@ function generateCallbackWrapper(fn: SwiftFunction): string {
   lines.push('')
 
   // Call Swift function, passing trampoline instead of callback
+  if (hasStringResultLength) lines.push('    int64_t result_len = 0;')
+  if (hasError) lines.push('    const char* swift_error = nullptr;')
   const callArgs = fn.params
     .map((p) => {
+      if (p.promiseCallbackRelease) return `release_callback_${prefix}`
       if (isCallbackType(p.type)) return `trampoline_${prefix}`
       if (p.callbackContext) return 'callback_state'
+      if (p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>')) return '&swift_error'
       if (p.bridgeStringLengthFor) return `${cppIdentifier(p.bridgeStringLengthFor)}_len`
+      if (p.bridgeStringResultLength) return '&result_len'
       return cppIdentifier(p.name)
     })
     .join(', ')
@@ -1378,8 +1625,22 @@ function generateCallbackWrapper(fn: SwiftFunction): string {
     lines.push(`    delete[] ${cppIdentifier(p.name)};`)
   }
 
+  if (hasError) {
+    lines.push('    if (swift_error) {')
+    if (retCat === 'string') lines.push('        free(const_cast<char*>(result));')
+    lines.push('        return throw_swift_error(env, swift_error);')
+    lines.push('    }')
+  }
+
   lines.push('')
-  generateReturnConversion(lines, fn.returnType, retCat)
+  generateReturnConversion(
+    lines,
+    fn.returnType,
+    retCat,
+    [],
+    undefined,
+    hasStringResultLength ? 'result_len' : undefined,
+  )
 
   lines.push('}')
   return lines.join('\n')
@@ -2154,6 +2415,99 @@ private func swiftNodeStreamComplete(
 }`
 }
 
+function generatePromiseCallbackSwiftRuntime(
+  fn: ExportedFunction,
+  parameter: ExportedFunction['params'][number],
+): string {
+  const info = promiseCallbackInfo(parameter.type)
+  if (!info) return ''
+
+  const prefix = `${sanitizeId(fn.name)}_${sanitizeId(parameter.name)}`
+  const cParameters = info.params.flatMap(() => ['UnsafePointer<CChar>', 'Int']).join(', ')
+  const lines: string[] = []
+
+  lines.push(
+    `public typealias SwiftNodePromiseCompletion_${prefix} = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> Void`,
+  )
+  lines.push(
+    `public typealias SwiftNodePromiseInvoke_${prefix} = @convention(c) (UnsafeMutableRawPointer?${cParameters ? `, ${cParameters}` : ''}, SwiftNodePromiseCompletion_${prefix}, UnsafeMutableRawPointer?) -> Void`,
+  )
+  lines.push(
+    `public typealias SwiftNodePromiseRelease_${prefix} = @convention(c) (UnsafeMutableRawPointer?) -> Void`,
+  )
+  lines.push(`private final class SwiftNodePromiseContinuation_${prefix}: @unchecked Sendable {`)
+  lines.push(`    private let lock = NSLock()`)
+  lines.push(`    private var continuation: CheckedContinuation<String, Error>?`)
+  lines.push(
+    `    init(_ continuation: CheckedContinuation<String, Error>) { self.continuation = continuation }`,
+  )
+  lines.push(
+    `    func resume(_ value: UnsafePointer<CChar>?, _ valueLength: Int, _ error: UnsafePointer<CChar>?, _ errorLength: Int) {`,
+  )
+  lines.push(`        lock.lock()`)
+  lines.push(`        let continuation = self.continuation`)
+  lines.push(`        self.continuation = nil`)
+  lines.push(`        lock.unlock()`)
+  lines.push(`        guard let continuation else { return }`)
+  lines.push(
+    `        if let error { continuation.resume(throwing: NSError(domain: "swift-node", code: 1, userInfo: [NSLocalizedDescriptionKey: swiftNodeDecodeUTF8(error, errorLength)])); return }`,
+  )
+  lines.push(
+    `        guard let value else { continuation.resume(throwing: NSError(domain: "swift-node", code: 1, userInfo: [NSLocalizedDescriptionKey: "JavaScript callback resolved without a value"])); return }`,
+  )
+  lines.push(`        continuation.resume(returning: swiftNodeDecodeUTF8(value, valueLength))`)
+  lines.push(`    }`)
+  lines.push(`}`)
+  lines.push(
+    `private func swiftNodePromiseComplete_${prefix}(_ context: UnsafeMutableRawPointer?, _ value: UnsafePointer<CChar>?, _ valueLength: Int, _ error: UnsafePointer<CChar>?, _ errorLength: Int) {`,
+  )
+  lines.push(`    guard let context else { return }`)
+  lines.push(
+    `    Unmanaged<SwiftNodePromiseContinuation_${prefix}>.fromOpaque(context).takeRetainedValue().resume(value, valueLength, error, errorLength)`,
+  )
+  lines.push(`}`)
+  lines.push(`private final class SwiftNodePromiseHandler_${prefix}: @unchecked Sendable {`)
+  lines.push(`    let invoke: SwiftNodePromiseInvoke_${prefix}`)
+  lines.push(`    let context: UnsafeMutableRawPointer?`)
+  lines.push(`    let release: SwiftNodePromiseRelease_${prefix}`)
+  lines.push(
+    `    init(invoke: @escaping SwiftNodePromiseInvoke_${prefix}, context: UnsafeMutableRawPointer?, release: @escaping SwiftNodePromiseRelease_${prefix}) { self.invoke = invoke; self.context = context; self.release = release }`,
+  )
+  lines.push(`    deinit { release(context) }`)
+  lines.push(
+    `    func call(${info.params.map((_, index) => `_ callbackArg${index}: String`).join(', ')}) async throws -> String {`,
+  )
+  lines.push(`        try await withCheckedThrowingContinuation { continuation in`)
+  lines.push(
+    `            let pending = Unmanaged.passRetained(SwiftNodePromiseContinuation_${prefix}(continuation)).toOpaque()`,
+  )
+  if (info.params.length === 0) {
+    lines.push(`            invoke(context, swiftNodePromiseComplete_${prefix}, pending)`)
+  } else {
+    const emit = (index: number, indent: string): void => {
+      if (index === info.params.length) {
+        const callArguments = Array.from({ length: info.params.length }, (_, argumentIndex) => [
+          `cArg${argumentIndex}`,
+          `callbackArg${argumentIndex}.utf8.count`,
+        ]).flat()
+        lines.push(
+          `${indent}invoke(context, ${callArguments.join(', ')}, swiftNodePromiseComplete_${prefix}, pending)`,
+        )
+        return
+      }
+      lines.push(`${indent}callbackArg${index}.withCString { cArg${index} in`)
+      emit(index + 1, `${indent}    `)
+      lines.push(`${indent}}`)
+    }
+    emit(0, '            ')
+  }
+  lines.push(`        }`)
+  lines.push(`    }`)
+  lines.push(`}`)
+
+  return lines.join('\n')
+}
+
 function streamElementCdeclType(type: string, transport?: BridgeTransport): string {
   if (transport === 'json') return 'UnsafePointer<CChar>'
   const cdeclType = nativeToCdeclType(type, false)
@@ -2390,6 +2744,11 @@ function generateSingleWrapper(
     if (transport === 'borrowed') return `_ ${p.name}: UnsafeRawPointer?, _ ${p.name}Len: Int`
     if (transport) return `_ ${p.name}: UnsafePointer<CChar>`
     if (cat === 'callback') {
+      const asyncInfo = promiseCallbackInfo(p.type)
+      if (asyncInfo) {
+        const prefix = `${sanitizeId(fn.name)}_${sanitizeId(p.name)}`
+        return `_ ${p.name}: SwiftNodePromiseInvoke_${prefix}, _ ${p.name}Context: UnsafeMutableRawPointer?, _ ${p.name}Release: SwiftNodePromiseRelease_${prefix}`
+      }
       const cleaned = p.type.replace(/@escaping\s+/g, '').trim()
       const match = cleaned.match(/^\(([^)]*)\)\s*->\s*(.+)$/)
       if (match) {
@@ -2492,6 +2851,21 @@ function generateSingleWrapper(
     } else if (cat === 'double' && swiftBaseType(p.type) === 'Float') {
       lines.push(`    let swift_${p.name} = Float(${p.name})`)
     } else if (cat === 'callback') {
+      const asyncInfo = promiseCallbackInfo(p.type)
+      if (asyncInfo) {
+        const prefix = `${sanitizeId(fn.name)}_${sanitizeId(p.name)}`
+        const cleaned = p.type.replace(/@escaping\s+/g, '').trim()
+        const callbackArguments = asyncInfo.params
+          .map((_, index) => `callbackArg${index}`)
+          .join(', ')
+        lines.push(
+          `    let handler_${prefix} = SwiftNodePromiseHandler_${prefix}(invoke: ${p.name}, context: ${p.name}Context, release: ${p.name}Release)`,
+        )
+        lines.push(
+          `    let swift_${p.name}: ${cleaned} = { ${callbackArguments} in try await handler_${prefix}.call(${callbackArguments}) }`,
+        )
+        continue
+      }
       // Create a bridging closure: user's function expects Swift types (String),
       // but we have a @convention(c) function pointer that takes C types (UnsafePointer<CChar>).
       // The closure accepts Swift types, converts them to C, and calls the C function.
@@ -2751,6 +3125,27 @@ export function exportedToSwiftFunctions(
         case 'bool':
           return [{ name: p.name, type: 'Bool' }]
         case 'callback': {
+          const asyncInfo = promiseCallbackInfo(p.type)
+          if (asyncInfo) {
+            const cParams = asyncInfo.params
+              .flatMap(() => ['UnsafePointer<CChar>', 'Int'])
+              .join(', ')
+            const signature = `@escaping @convention(c) (UnsafeMutableRawPointer?${cParams ? `, ${cParams}` : ''}, @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> Void, UnsafeMutableRawPointer?) -> Void`
+            return [
+              {
+                name: p.name,
+                type: signature,
+                nativeType: p.type,
+                promiseCallback: asyncInfo,
+              },
+              { name: `${p.name}Context`, type: 'UnsafeMutableRawPointer?', callbackContext: true },
+              {
+                name: `${p.name}Release`,
+                type: '@escaping @convention(c) (UnsafeMutableRawPointer?) -> Void',
+                promiseCallbackRelease: true,
+              },
+            ]
+          }
           const cleaned = p.type.replace(/@escaping\s+/g, '').trim()
           const match = cleaned.match(/^\(([^)]*)\)\s*->\s*(.+)$/)
           if (match) {
@@ -2910,6 +3305,15 @@ export function generateWrappersSwift(
   if (exported.some((fn) => fn.isStream)) {
     lines.push(generateSwiftStreamRuntime())
     lines.push('')
+  }
+
+  for (const fn of exported) {
+    for (const parameter of fn.params) {
+      if (promiseCallbackInfo(parameter.type)) {
+        lines.push(generatePromiseCallbackSwiftRuntime(fn, parameter))
+        lines.push('')
+      }
+    }
   }
 
   for (const fn of exported) {

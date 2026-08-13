@@ -20,6 +20,10 @@ export interface SwiftParam {
   bridgeBorrowedBufferLengthFor?: string
   /** Generated context pointer paired with a callback function pointer. */
   callbackContext?: boolean
+  /** A retained callback whose JavaScript result settles a Swift continuation. */
+  promiseCallback?: PromiseCallbackInfo
+  /** Generated release callback paired with a retained promise callback. */
+  promiseCallbackRelease?: boolean
 }
 
 /** A deliberate text transport across the Swift/C/Node boundary. */
@@ -32,7 +36,15 @@ export interface CallbackParam {
 
 export interface CallbackInfo {
   params: CallbackParam[]
-  returnType: string // always 'Void'
+  returnType: string
+  isAsync: boolean
+  throws: boolean
+}
+
+/** The deliberately narrow Swift-to-JavaScript Promise callback bridge. */
+export interface PromiseCallbackInfo {
+  params: CallbackParam[]
+  returnType: string
 }
 
 export interface SwiftFunction {
@@ -108,18 +120,21 @@ export function parseCallbackType(type: string): CallbackInfo | null {
   // Strip @escaping and @convention(c)
   const cleaned = type
     .replace(/@escaping\s+/g, '')
+    .replace(/@Sendable\s+/g, '')
     .replace(/@convention\(c\)\s*/g, '')
     .trim()
 
-  // Match (ParamTypes) -> ReturnType
-  const match = cleaned.match(/^\(([^)]*)\)\s*->\s*(.+)$/)
+  // Match (ParamTypes) [async] [throws] -> ReturnType
+  const match = cleaned.match(/^\(([^)]*)\)\s*(async\s+)?(throws\s+)?->\s*(.+)$/)
   if (!match) return null
 
   const paramsStr = match[1].trim()
-  const returnType = match[2].trim()
+  const returnType = match[4].trim()
+  const isAsync = !!match[2]
+  const throws = !!match[3]
 
   if (!paramsStr) {
-    return { params: [], returnType }
+    return { params: [], returnType, isAsync, throws }
   }
 
   const paramParts = splitParams(paramsStr)
@@ -131,7 +146,7 @@ export function parseCallbackType(type: string): CallbackInfo | null {
     }
   })
 
-  return { params, returnType }
+  return { params, returnType, isAsync, throws }
 }
 
 // Extract the full function signature, handling multi-line signatures

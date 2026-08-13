@@ -11,8 +11,8 @@ import {
   bridgeTransportForType,
   classifyNativeSwiftType,
   isEscapingCallback,
+  parseCallbackType,
   parseSwiftStreamReturnType,
-  splitParams,
 } from './parser.js'
 import { cppIdentifier } from './generator.js'
 
@@ -704,19 +704,26 @@ function validateCallbackSignatures(exported: ExportedFunction[]): ValidationErr
     for (const p of fn.params) {
       if (!isEscapingCallback(p.type)) continue
 
-      const cleaned = p.type.replace(/@escaping\s+/g, '').trim()
-      const match = cleaned.match(/^\(([^)]*)\)\s*->\s*(.+)$/)
-      if (!match) {
+      const callback = parseCallbackType(p.type)
+      if (!callback) {
         errors.push({
-          message: `Callback parameter '${p.name}' in export function '${fn.name}' must use a simple @escaping (...) -> Void signature.`,
+          message: `Callback parameter '${p.name}' in export function '${fn.name}' must use a supported @escaping closure signature.`,
           line: fn.line,
           severity: 'error',
         })
         continue
       }
 
-      const returnType = match[2].trim()
-      if (returnType !== 'Void' && returnType !== '()') {
+      const isPromiseCallback =
+        callback.isAsync && callback.throws && callback.returnType === 'String'
+      if (!isPromiseCallback && (callback.isAsync || callback.throws)) {
+        errors.push({
+          message: `Callback parameter '${p.name}' in export function '${fn.name}' must be synchronous and return Void, or be an async throws callback returning String.`,
+          line: fn.line,
+          severity: 'error',
+        })
+      }
+      if (!isPromiseCallback && callback.returnType !== 'Void' && callback.returnType !== '()') {
         errors.push({
           message: `Callback parameter '${p.name}' in export function '${fn.name}' must return Void.`,
           line: fn.line,
@@ -724,9 +731,8 @@ function validateCallbackSignatures(exported: ExportedFunction[]): ValidationErr
         })
       }
 
-      const callbackParams = match[1].trim() ? splitParams(match[1]) : []
-      for (const callbackParam of callbackParams) {
-        const callbackType = callbackParam.trim()
+      for (const callbackParam of callback.params) {
+        const callbackType = callbackParam.swiftType.trim()
         if (callbackType.endsWith('?') && callbackType !== 'String?') {
           errors.push({
             message: `Callback parameter '${p.name}' in export function '${fn.name}' uses unsupported optional callback argument type '${callbackType}'. Only String? callback arguments are supported.`,
@@ -736,6 +742,14 @@ function validateCallbackSignatures(exported: ExportedFunction[]): ValidationErr
           continue
         }
         const cat = classifyNativeSwiftType(callbackType)
+        if (isPromiseCallback && callbackType !== 'String') {
+          errors.push({
+            message: `Async callback parameter '${p.name}' in export function '${fn.name}' supports String arguments only.`,
+            line: fn.line,
+            severity: 'error',
+          })
+          continue
+        }
         if (
           cat === 'unknown' ||
           cat === 'buffer' ||

@@ -4,6 +4,37 @@ import Foundation
 // The tick function accepts a callback and calls it with a message.
 
 private var timer: DispatchSourceTimer?
+private let promiseCallbackLock = NSLock()
+private var installedPromiseCallback: ((String) async throws -> String)?
+
+// @swift-node:export
+func installPromiseCallback(_ callback: @escaping (String) async throws -> String) {
+    promiseCallbackLock.lock()
+    installedPromiseCallback = callback
+    promiseCallbackLock.unlock()
+}
+
+// @swift-node:export
+func clearPromiseCallback() {
+    promiseCallbackLock.lock()
+    installedPromiseCallback = nil
+    promiseCallbackLock.unlock()
+}
+
+// @swift-node:export
+func invokeInstalledPromiseCallback(_ value: String, _ onResult: @escaping (String) -> Void) {
+    promiseCallbackLock.lock()
+    let callback = installedPromiseCallback
+    promiseCallbackLock.unlock()
+
+    Task {
+        do {
+            onResult(try await callback?(value) ?? "no callback")
+        } catch {
+            onResult("error:\(error.localizedDescription)")
+        }
+    }
+}
 
 // @swift-node:export
 func tick(_ callback: @escaping (String) -> Void) {
