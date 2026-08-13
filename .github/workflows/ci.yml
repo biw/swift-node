@@ -17,6 +17,9 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Fail on Node warnings
+        run: node scripts/configure-node-warning-policy.mjs
+
       - run: node scripts/check-package-versions.mjs
 
   quality:
@@ -29,6 +32,9 @@ jobs:
         with:
           node-version: '24'
           cache: true
+
+      - name: Fail on Node warnings
+        run: node scripts/configure-node-warning-policy.mjs
 
       - run: vp install
       - run: vp check
@@ -53,6 +59,9 @@ jobs:
         with:
           node-version: '24'
           cache: true
+
+      - name: Fail on Node warnings
+        run: node scripts/configure-node-warning-policy.mjs
 
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
@@ -87,6 +96,9 @@ jobs:
         with:
           node-version: '24'
           cache: true
+
+      - name: Fail on Node warnings
+        run: node scripts/configure-node-warning-policy.mjs
 
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
@@ -134,6 +146,9 @@ jobs:
         with:
           node-version: '24'
           cache: true
+
+      - name: Fail on Node warnings
+        run: node scripts/configure-node-warning-policy.mjs
 
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
@@ -187,6 +202,9 @@ jobs:
           node-version: '24'
           cache: true
 
+      - name: Fail on Node warnings
+        run: node scripts/configure-node-warning-policy.mjs
+
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@v0.4.0
@@ -233,6 +251,9 @@ jobs:
         with:
           node-version: '24'
           cache: true
+
+      - name: Fail on Node warnings
+        run: node scripts/configure-node-warning-policy.mjs
 
       - name: Install Swift toolchain
         if: runner.os == 'Windows'

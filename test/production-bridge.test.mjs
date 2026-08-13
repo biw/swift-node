@@ -254,6 +254,40 @@ func notifyLater(_ value: Int, _ callback: @escaping (Int) -> Void) {
       throw new Error('background Swift callbacks did not each deliver their value: ' + JSON.stringify(seen))
     }
   `,
+    // A threadsafe callback has no JavaScript caller to receive an exception.
+    // Run this separately with Node's strict Node-API callback policy: an
+    // uncleared pending exception terminates the process before the recovery
+    // callback can run.
+    postAssertion: `const { notifyLater } = require('./dist_swift-node/index.cjs')
+
+let threwCallbackRan = false
+let recoveredValue
+
+function fail(message) {
+  console.error(message)
+  process.exit(1)
+}
+
+notifyLater(7, () => {
+  threwCallbackRan = true
+  throw new Error('background callback failure')
+})
+
+setTimeout(() => {
+  if (!threwCallbackRan) return fail('throwing background callback did not run')
+
+  notifyLater(8, (value) => {
+    recoveredValue = value
+  })
+
+  setTimeout(() => {
+    if (recoveredValue !== 8) {
+      return fail('threadsafe callback delivery did not recover after a callback exception')
+    }
+    process.exit(0)
+  }, 100)
+}, 100)
+`,
   },
   {
     name: 'borrowed-buffer-input',
