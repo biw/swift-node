@@ -267,7 +267,7 @@ Publish macOS binaries as `dist_swift-node/{moduleName}.darwin-{arch}.node`, or 
 
 - Node.js 24 or newer
 - `swiftc` and `clang++` available on `PATH`
-- macOS 12 or newer with Xcode or Command Line Tools; Linux with Swift and clang++; or Windows with the Swift toolchain and clang++ (the first Windows build downloads matching Node headers and `node.lib`)
+- macOS 14 or newer with Xcode or Command Line Tools; Linux with Swift and clang++; or Windows with the Swift toolchain and clang++ (the first Windows build downloads matching Node headers and `node.lib`)
 - A package manager for your project; interactive `init` detects npm, pnpm, Bun, and modern Yarn via Corepack
 - `import Foundation` only in Swift source that uses Foundation APIs such as `Data`, `NSError`, `DispatchQueue`, or Foundation JSON APIs; the starter does not need it
 
