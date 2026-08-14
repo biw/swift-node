@@ -470,6 +470,24 @@ enum PlainFailure: LocalizedError {
     var errorDescription: String? { "plain failure" }
 }
 
+enum EscapedFailure: SwiftNodeStructuredError {
+    case expected
+
+    var code: String { "escaped.failure" }
+    var message: String { "Escaped \\"quote\\"\\nNUL \\u{0} 🧪" }
+    var details: [String: SwiftNodeJSONValue] {
+        ["text": .string("Escaped \\"quote\\"\\nNUL \\u{0} 🧪")]
+    }
+}
+
+enum NonFiniteDetailsFailure: SwiftNodeStructuredError {
+    case expected
+
+    var code: String { "non-finite.failure" }
+    var message: String { "The details cannot be encoded" }
+    var details: [String: SwiftNodeJSONValue] { ["value": .number(Double.nan)] }
+}
+
 // @swift-node:export
 func echoString(_ value: String) -> String { value }
 
@@ -499,6 +517,12 @@ func failMark() throws { throw MatrixFailure.expected }
 
 // @swift-node:export
 func failPlain() throws { throw PlainFailure.expected }
+
+// @swift-node:export
+func failEscaped() throws { throw EscapedFailure.expected }
+
+// @swift-node:export
+func failNonFinite() throws { throw NonFiniteDetailsFailure.expected }
 
 // @swift-node:export
 func echoOptionalString(_ value: String?) -> String? { value }
@@ -696,6 +720,8 @@ func echoCrossFileEnvelope(_ value: CrossFileEnvelope) -> CrossFileEnvelope { va
   echoRecord,
   echoString,
   eventStream,
+  failEscaped,
+  failNonFinite,
   failPlain,
   failMark,
   floatStream,
@@ -721,6 +747,8 @@ const float: number = echoFloat(1)
 const boolean: boolean = echoBool(true)
 const nothing: void = mark()
 const rejectedNothing: void = failMark()
+const escapedFailure: void = failEscaped()
+const nonFiniteFailure: void = failNonFinite()
 const optionalString: string | null = echoOptionalString(null)
 const optionalInt: number | null = echoOptionalInt(null)
 const optionalInt32: number | null = echoOptionalInt32(null)
@@ -753,6 +781,7 @@ const structuredSubscription: SwiftNodeSubscription = eventStream((value: unknow
 const stringSubscription: SwiftNodeSubscription = stringStream('value', (value: string) => { void value })
 
 void string; void integer; void int32; void int64; void double; void float; void boolean; void nothing; void rejectedNothing
+void escapedFailure; void nonFiniteFailure
 void optionalString; void optionalInt; void optionalInt32; void optionalInt64; void optionalDouble; void optionalFloat; void optionalBool
 void bytes; void byteArray; void items; void genericItems; void counts; void genericCounts; void record
 void promiseString; void promiseOptional; void promiseBytes; void promiseCodable; void mainActor; void globalActor
@@ -850,6 +879,47 @@ void callbackResult; void scalarSubscription; void structuredSubscription; void 
     } catch (error) {
       checkPlainError('plain sync throw', error)
     }
+    try {
+      addon.failEscaped()
+      failures.push('escaped structured throw: expected an exception')
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        failures.push('escaped structured throw: expected an Error')
+      } else {
+        same('escaped structured throw message', error.message, 'Escaped "quote"\\nNUL \\u0000 🧪')
+        same('escaped structured throw code', error.code, 'escaped.failure')
+        same('escaped structured throw details', error.details, {
+          text: 'Escaped "quote"\\nNUL \\u0000 🧪',
+        })
+      }
+    }
+    try {
+      addon.failNonFinite()
+      failures.push('non-finite details throw: expected an exception')
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        failures.push('non-finite details throw: expected an Error')
+      } else {
+        same(
+          'non-finite details fallback message',
+          error.message,
+          'swift-node failed to encode an error',
+        )
+        check('non-finite details has no code', !Object.hasOwn(error, 'code'))
+        check('non-finite details has no details', !Object.hasOwn(error, 'details'))
+      }
+    }
+    for (let index = 0; index < 500; index += 1) {
+      try {
+        addon.failMark()
+        failures.push('repeated structured sync throw: expected an exception')
+      } catch (error) {
+        if (!(error instanceof Error) || error.code !== 'matrix.failure') {
+          failures.push('repeated structured sync throw: incorrect error')
+          break
+        }
+      }
+    }
 
     same('optional String value', addon.echoOptionalString('optional'), 'optional')
     same('optional String null', addon.echoOptionalString(null), null)
@@ -932,6 +1002,17 @@ void callbackResult; void scalarSubscription; void structuredSubscription; void 
     } catch (error) {
       checkPlainError('plain async throw', error)
     }
+    for (let index = 0; index < 100; index += 1) {
+      try {
+        await addon.asyncBox({ value: -1 })
+        failures.push('repeated structured async throw: expected a rejected Promise')
+      } catch (error) {
+        if (!(error instanceof Error) || error.code !== 'matrix.failure') {
+          failures.push('repeated structured async throw: incorrect error')
+          break
+        }
+      }
+    }
 
     same('MainActor', addon.mainActorEcho('node'), 'main-node')
     same('global actor', await addon.globalActorEcho('node'), 'global-node')
@@ -1000,7 +1081,37 @@ function verifyAfterCollection(attempt = 0) {
   }, 5)
 }
 
-verifyAfterCollection()
+;(async () => {
+  try {
+    addon.failMark()
+    fail('CommonJS structured sync throw did not throw')
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      error.message !== 'matrix failure' ||
+      error.code !== 'matrix.failure' ||
+      error.details?.context?.source !== 'matrix'
+    ) {
+      fail('CommonJS structured sync throw lost error metadata')
+    }
+  }
+
+  try {
+    await addon.asyncBox({ value: -1 })
+    fail('CommonJS structured async throw did not reject')
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      error.message !== 'matrix failure' ||
+      error.code !== 'matrix.failure' ||
+      error.details?.context?.source !== 'matrix'
+    ) {
+      fail('CommonJS structured async throw lost error metadata')
+    }
+  }
+
+  verifyAfterCollection()
+})().catch((error) => fail('CommonJS structured error check failed: ' + error.message))
 `,
   },
 ]

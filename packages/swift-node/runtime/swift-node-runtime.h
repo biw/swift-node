@@ -163,32 +163,38 @@ static inline napi_value swift_node_error_from_swift_payload(napi_env env, const
         return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
     }
 
-    napi_value error;
-    if (napi_create_error(env, nullptr, message, &error) != napi_ok) return nullptr;
-
     bool has_code = false;
     if (napi_has_named_property(env, payload, "code", &has_code) != napi_ok) return nullptr;
+    bool has_details = false;
+    if (napi_has_named_property(env, payload, "details", &has_details) != napi_ok) return nullptr;
+    if (has_code != has_details) {
+        return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
+    }
+
+    napi_value code;
     if (has_code) {
-        napi_value code;
         napi_valuetype code_type;
         if (napi_get_named_property(env, payload, "code", &code) != napi_ok ||
             napi_typeof(env, code, &code_type) != napi_ok || code_type != napi_string) {
             return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
         }
-        if (napi_set_named_property(env, error, "code", code) != napi_ok) return nullptr;
     }
 
-    bool has_details = false;
-    if (napi_has_named_property(env, payload, "details", &has_details) != napi_ok) return nullptr;
+    napi_value details;
     if (has_details) {
-        napi_value details;
         napi_valuetype details_type;
+        bool details_is_array = false;
         if (napi_get_named_property(env, payload, "details", &details) != napi_ok ||
-            napi_typeof(env, details, &details_type) != napi_ok || details_type != napi_object) {
+            napi_typeof(env, details, &details_type) != napi_ok || details_type != napi_object ||
+            napi_is_array(env, details, &details_is_array) != napi_ok || details_is_array) {
             return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
         }
-        if (napi_set_named_property(env, error, "details", details) != napi_ok) return nullptr;
     }
+
+    napi_value error;
+    if (napi_create_error(env, nullptr, message, &error) != napi_ok) return nullptr;
+    if (has_code && napi_set_named_property(env, error, "code", code) != napi_ok) return nullptr;
+    if (has_details && napi_set_named_property(env, error, "details", details) != napi_ok) return nullptr;
 
     return error;
 }
