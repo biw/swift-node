@@ -8,7 +8,7 @@
 export { cppIdentifier } from './shared.js'
 export { generateBridgeH, generateStructsHeader } from './bridge-header.js'
 export { generateAddonCpp } from './addon.js'
-export { exportedToSwiftFunctions, generateWrappersSwift } from './swift-wrapper.js'
+export { exportedToSwiftFunctions, generateWrappersSwift } from './swift-wrapper/index.js'
 export { generateDts, generateDtsCjs } from './declarations.js'
 export {
   generateEntryCjs,
