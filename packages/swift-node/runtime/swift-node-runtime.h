@@ -19,13 +19,6 @@ struct AutoFreeStr {
     AutoFreeStr& operator=(const AutoFreeStr&) = delete;
 };
 
-// Throw a JS error from a Swift error string, then free it.
-static inline napi_value throw_swift_error(napi_env env, const char* msg) {
-    AutoFreeStr guard(msg);
-    napi_throw_error(env, nullptr, msg);
-    return nullptr;
-}
-
 static inline napi_value swift_node_throw_type_error(napi_env env, const char* msg) {
     napi_throw_type_error(env, nullptr, msg);
     return nullptr;
@@ -138,6 +131,87 @@ static inline bool swift_node_json_parse(napi_env env, const char* json_text, na
     if (!swift_node_napi_ok(env, napi_get_named_property(env, json, "parse", &parse), "Failed to read JSON.parse")) return false;
     if (!swift_node_napi_ok(env, swift_node_create_string(env, json_text, &source), "Failed to create JSON string")) return false;
     return swift_node_napi_ok(env, napi_call_function(env, json, parse, 1, &source, result), "Native result was not valid JSON");
+}
+
+static inline napi_value swift_node_error_with_message(napi_env env, const char* message) {
+    napi_value text;
+    if (napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &text) != napi_ok) return nullptr;
+    napi_value error;
+    if (napi_create_error(env, nullptr, text, &error) != napi_ok) return nullptr;
+    return error;
+}
+
+static inline napi_value swift_node_error_from_swift_payload(napi_env env, const char* encoded) {
+    if (!encoded) return swift_node_error_with_message(env, "Swift operation failed without an error payload");
+
+    napi_value payload;
+    if (!swift_node_json_parse(env, encoded, &payload)) {
+        napi_value parsing_error;
+        if (napi_get_and_clear_last_exception(env, &parsing_error) == napi_ok) return parsing_error;
+        return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
+    }
+
+    napi_valuetype payload_type;
+    if (napi_typeof(env, payload, &payload_type) != napi_ok || payload_type != napi_object) {
+        return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
+    }
+
+    napi_value message;
+    napi_valuetype message_type;
+    if (napi_get_named_property(env, payload, "message", &message) != napi_ok ||
+        napi_typeof(env, message, &message_type) != napi_ok || message_type != napi_string) {
+        return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
+    }
+
+    napi_value error;
+    if (napi_create_error(env, nullptr, message, &error) != napi_ok) return nullptr;
+
+    bool has_code = false;
+    if (napi_has_named_property(env, payload, "code", &has_code) != napi_ok) return nullptr;
+    if (has_code) {
+        napi_value code;
+        napi_valuetype code_type;
+        if (napi_get_named_property(env, payload, "code", &code) != napi_ok ||
+            napi_typeof(env, code, &code_type) != napi_ok || code_type != napi_string) {
+            return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
+        }
+        if (napi_set_named_property(env, error, "code", code) != napi_ok) return nullptr;
+    }
+
+    bool has_details = false;
+    if (napi_has_named_property(env, payload, "details", &has_details) != napi_ok) return nullptr;
+    if (has_details) {
+        napi_value details;
+        napi_valuetype details_type;
+        if (napi_get_named_property(env, payload, "details", &details) != napi_ok ||
+            napi_typeof(env, details, &details_type) != napi_ok || details_type != napi_object) {
+            return swift_node_error_with_message(env, "Swift operation returned an invalid error payload");
+        }
+        if (napi_set_named_property(env, error, "details", details) != napi_ok) return nullptr;
+    }
+
+    return error;
+}
+
+// Swift errors cross the C ABI as a JSON envelope. Ordinary Swift errors carry
+// only their message; errors conforming to SwiftNodeStructuredError also carry
+// code and details as own properties on the JavaScript Error object.
+static inline napi_value throw_swift_error(napi_env env, const char* encoded) {
+    AutoFreeStr guard(encoded);
+    napi_value error = swift_node_error_from_swift_payload(env, encoded);
+    if (!error) {
+        napi_throw_error(env, nullptr, "Failed to create a JavaScript error from Swift");
+        return nullptr;
+    }
+    napi_throw(env, error);
+    return nullptr;
+}
+
+static inline void swift_node_reject_swift_error(napi_env env, napi_deferred deferred, const char* encoded) {
+    AutoFreeStr guard(encoded);
+    napi_value error = swift_node_error_from_swift_payload(env, encoded);
+    if (!error) error = swift_node_error_with_message(env, "Failed to create a JavaScript error from Swift");
+    if (error) napi_reject_deferred(env, deferred, error);
 }
 
 static inline bool swift_node_is_buffer_or_typedarray(napi_env env, napi_value value, const char* message) {
