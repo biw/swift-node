@@ -207,9 +207,16 @@ describe('timer-callback', () => {
       let subscription:
         | { cancel(): void; readonly closed: boolean; [Symbol.dispose](): void }
         | undefined
+      let completedSubscription: { readonly closed: boolean } | undefined
 
       const completedStream = new Promise<void>((resolve, reject) => {
-        addon.streamTicks('complete', 2, (value: string) => completed.push(value), reject, resolve)
+        completedSubscription = addon.streamTicks(
+          'complete',
+          2,
+          (value: string) => completed.push(value),
+          reject,
+          resolve,
+        )
       })
       await new Promise<void>((resolve) => {
         subscription = addon.streamUntilCancelled('cancel', (value: string) => {
@@ -227,6 +234,7 @@ describe('timer-callback', () => {
       expect(cancelled).toHaveLength(countAtCancellation)
       await completedStream
       expect(completed).toEqual(['complete:0', 'complete:1'])
+      expect(completedSubscription!.closed).toBe(true)
     })
 
     it('delivers stream failures once and does not report normal completion', async () => {
