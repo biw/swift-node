@@ -61,6 +61,10 @@ jobs:
           node-version: '24'
           cache: true
 
+      - name: Prepare Windows native toolchain
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-toolchain
+
       - run: node scripts/run-without-node-warnings.mjs vp install
       - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node pack
       - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node test
