@@ -24,7 +24,7 @@ describe('project configuration', () => {
     withProject({ name: 'my-addon' }, (projectDir) => {
       expect(readConfig(projectDir)).toMatchObject({
         moduleName: 'my_addon',
-        minMacosVersion: '12.0',
+        minMacosVersion: '14.0',
         shipSwiftRuntime: true,
       })
     })

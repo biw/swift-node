@@ -30,8 +30,8 @@ describe('prebuild targets', () => {
       expect.objectContaining({ id: 'win32-x64', runner: 'windows-2022' }),
       expect.objectContaining({ id: 'linux-arm64', runner: 'ubuntu-22.04-arm', preview: true }),
       expect.objectContaining({ id: 'win32-arm64', runner: 'windows-11-arm', preview: true }),
-      expect.objectContaining({ id: 'darwin-x64', runner: 'macos-15-intel' }),
-      expect.objectContaining({ id: 'darwin-arm64', runner: 'macos-15' }),
+      expect.objectContaining({ id: 'darwin-x64', runner: 'macos-26-intel' }),
+      expect.objectContaining({ id: 'darwin-arm64', runner: 'macos-26' }),
     ])
   })
 
@@ -102,6 +102,9 @@ describe('generated prebuild workflow', () => {
     expect(workflow).toContain('runner: ubuntu-22.04')
     expect(workflow).toContain('target: win32-arm64')
     expect(workflow).toContain('runner: windows-11-arm')
+    expect(workflow).toContain('uses: actions/setup-node@v7')
+    expect(workflow).toContain('uses: actions/upload-artifact@v7')
+    expect(workflow).toContain('uses: actions/download-artifact@v8')
     expect(workflow).toContain('SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9')
     expect(workflow).toContain('prebuild_path: dist_swift-node/linux-x64/**')
     expect(workflow).toContain('name: swift-node-runtime-files')
@@ -146,6 +149,9 @@ describe('generated prebuild workflow', () => {
       expect(workflow).not.toContain('swift-node prebuild')
       expect(workflow).toContain('npm pack --pack-destination release')
       expect(workflow).not.toContain('npx swift-node')
+      if (packageManager === 'bun') {
+        expect(workflow).toContain('oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6')
+      }
     },
   )
 
@@ -209,7 +215,9 @@ describe('generated prebuild CI workflow', () => {
 
     expect(workflow).toContain('name: CI')
     expect(workflow).toContain('runner: ubuntu-22.04')
-    expect(workflow).toContain('runner: macos-15')
+    expect(workflow).toContain('runner: macos-26')
+    expect(workflow).toContain('uses: actions/setup-node@v7')
+    expect(workflow).toContain('node-version: 24')
     expect(workflow).toContain('swift-version: 6.3.3')
     expect(workflow).toContain('pnpm install --frozen-lockfile')
     expect(workflow).toContain('pnpm run build')

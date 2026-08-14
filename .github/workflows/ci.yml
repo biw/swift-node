@@ -42,8 +42,10 @@ jobs:
         include:
           - runner: ubuntu-latest
             platform: Linux
-          - runner: macos-latest
-            platform: macOS
+          - runner: macos-26
+            platform: macOS ARM64
+          - runner: macos-26-intel
+            platform: macOS Intel
           - runner: windows-latest
             platform: Windows
     steps:
@@ -76,8 +78,10 @@ jobs:
         include:
           - runner: ubuntu-latest
             platform: Linux
-          - runner: macos-latest
-            platform: macOS
+          - runner: macos-26
+            platform: macOS ARM64
+          - runner: macos-26-intel
+            platform: macOS Intel
           - runner: windows-latest
             platform: Windows
     steps:
@@ -125,8 +129,16 @@ jobs:
 
   example-secure-storage:
     # This demo uses Apple's Security/Keychain framework and has no Linux backend.
-    name: Example - Secure Storage - macOS
-    runs-on: macos-latest
+    name: Example - Secure Storage - ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            platform: macOS ARM64
+          - runner: macos-26-intel
+            platform: macOS Intel
     steps:
       - uses: actions/checkout@v7
 
@@ -175,8 +187,10 @@ jobs:
         include:
           - runner: ubuntu-latest
             platform: Linux
-          - runner: macos-latest
-            platform: macOS
+          - runner: macos-26
+            platform: macOS ARM64
+          - runner: macos-26-intel
+            platform: macOS Intel
           - runner: windows-latest
             platform: Windows
     steps:
@@ -222,8 +236,10 @@ jobs:
         include:
           - runner: ubuntu-latest
             platform: Linux
-          - runner: macos-latest
-            platform: macOS
+          - runner: macos-26
+            platform: macOS ARM64
+          - runner: macos-26-intel
+            platform: macOS Intel
           - runner: windows-latest
             platform: Windows
     steps:
