@@ -1,19 +1,13 @@
 import {
-  BridgeTransport,
-  SwiftFunction,
-  SwiftParam,
-  SwiftStruct,
-  SwiftStructField,
-  PromiseCallbackInfo,
-  bridgeTransportForType,
+  type BridgeTransport,
+  type SwiftFunction,
+  type SwiftParam,
+  type SwiftStruct,
   classifySwiftType,
-  SwiftTypeCategory,
+  type SwiftTypeCategory,
   isCallbackType,
   parseCallbackType,
-  ExportedFunction,
   classifyNativeSwiftType,
-  parseSwiftStreamReturnType,
-  splitParams,
 } from '../parser.js'
 
 import {
@@ -22,13 +16,10 @@ import {
   cppType,
   cppTypeFromCategory,
   findStruct,
-  getCallbackParam,
-  hasErrorOutParam,
   isNullableType,
   jsName,
   jsParams,
   streamElementUsesStringLength,
-  wireReturnType,
 } from './shared.js'
 
 // --- C++ addon generation ---
@@ -36,6 +27,14 @@ import {
 function callbackParamCategory(type: string): SwiftTypeCategory {
   const generated = classifySwiftType(type)
   return generated === 'unknown' ? classifyNativeSwiftType(type) : generated
+}
+
+function hasErrorOutParam(fn: SwiftFunction): boolean {
+  return fn.params.some((p) => p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>'))
+}
+
+function getCallbackParam(fn: SwiftFunction): SwiftParam | null {
+  return fn.params.find((p) => isCallbackType(p.type)) || null
 }
 
 function generatePromiseCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftParam): string {
@@ -473,7 +472,6 @@ function generateCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftParam): str
 
 function generateJsWrapper(
   fn: SwiftFunction,
-  moduleName: string,
   structs: SwiftStruct[] = [],
 ): string {
   if (getCallbackParam(fn)) {
@@ -2110,7 +2108,7 @@ export function generateAddonCpp(
     if (fn.stream) {
       lines.push(`// Stream wrapper for ${fn.symbolName} was generated above.`)
     } else {
-      lines.push(generateJsWrapper(fn, moduleName, structs))
+      lines.push(generateJsWrapper(fn, structs))
     }
     lines.push('')
   }

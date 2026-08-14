@@ -4,21 +4,15 @@
  */
 
 import {
-  BridgeTransport,
-  SwiftFunction,
-  SwiftParam,
-  SwiftStruct,
-  SwiftStructField,
-  PromiseCallbackInfo,
-  bridgeTransportForType,
+  type BridgeTransport,
+  type SwiftFunction,
+  type SwiftParam,
+  type SwiftStruct,
+  type PromiseCallbackInfo,
   classifySwiftType,
-  SwiftTypeCategory,
-  isCallbackType,
+  type SwiftTypeCategory,
   parseCallbackType,
-  ExportedFunction,
   classifyNativeSwiftType,
-  parseSwiftStreamReturnType,
-  splitParams,
 } from '../parser.js'
 
 // Sanitize name for use as a C/C++ identifier
@@ -166,10 +160,6 @@ export function cppType(swiftType: string): string {
   }
 }
 
-export function wireReturnType(fn: SwiftFunction): string {
-  return fn.nativeReturnType || fn.returnType
-}
-
 // C++ type from a native Swift type category (used for export-generated bridge code)
 export function cppTypeFromCategory(cat: SwiftTypeCategory): string {
   switch (cat) {
@@ -195,151 +185,8 @@ export function cppReturnType(swiftType: string): string {
   return cppType(swiftType)
 }
 
-export function tsType(swiftType: string): string {
-  const cat = classifySwiftType(swiftType)
-  const nullable = swiftType.endsWith('?')
-  const base = (() => {
-    switch (cat) {
-      case 'int32':
-        return 'number'
-      case 'int64':
-        return 'number'
-      case 'double':
-        return 'number'
-      case 'bool':
-        return 'boolean'
-      case 'string':
-        return 'string'
-      case 'buffer':
-        return 'Buffer'
-      case 'void':
-        return 'void'
-      case 'callback':
-        return '(...args: any[]) => void'
-      default:
-        return 'unknown'
-    }
-  })()
-  return nullable && base !== 'void' ? `${base} | null` : base
-}
-
 export function isNullableType(swiftType: string): boolean {
   return swiftType.replace(/\s+/g, ' ').trim().endsWith('?')
-}
-
-export function shorthandDictionaryValueType(type: string): string | null {
-  if (!type.startsWith('[') || !type.endsWith(']')) return null
-
-  const contents = type.slice(1, -1)
-  let depth = 0
-  for (let index = 0; index < contents.length; index++) {
-    const character = contents[index]
-    if (character === '[' || character === '<' || character === '(') depth++
-    else if (character === ']' || character === '>' || character === ')') depth--
-    else if (character === ':' && depth === 0) {
-      return contents.slice(0, index) === 'String' ? contents.slice(index + 1) : null
-    }
-  }
-
-  return null
-}
-
-// TypeScript type from native Swift type (for export-generated .d.ts)
-export function tsTypeFromNative(swiftType: string, dataAsBase64 = false): string {
-  const normalized = swiftType.replace(/\s+/g, '')
-  const nullable = normalized.endsWith('?')
-  const baseType = nullable ? normalized.slice(0, -1) : normalized
-  const genericDictionary = baseType.match(/^Dictionary<(.*)>$/)
-  const dictionaryArgs = genericDictionary ? splitParams(genericDictionary[1]) : []
-  const dictionaryValue =
-    dictionaryArgs.length === 2 && dictionaryArgs[0].replace(/\s+/g, '') === 'String'
-      ? dictionaryArgs[1]
-      : shorthandDictionaryValueType(baseType)
-  if (dictionaryValue) {
-    const type = `Record<string, ${tsTypeFromNative(dictionaryValue, dataAsBase64)}>`
-    return nullable ? `${type} | null` : type
-  }
-
-  const arrayMatch = baseType.match(/^\[(.*)\]$/) || baseType.match(/^Array<(.*)>$/)
-  if (arrayMatch) {
-    const element = tsTypeFromNative(arrayMatch[1], dataAsBase64)
-    const type = `${element.includes(' | ') ? `(${element})` : element}[]`
-    return nullable ? `${type} | null` : type
-  }
-  if (baseType === 'Data')
-    return `${dataAsBase64 ? 'string' : 'Uint8Array'}${nullable ? ' | null' : ''}`
-  if (baseType === 'UnsafeRawBufferPointer') return 'Uint8Array'
-  const cat = classifyNativeSwiftType(swiftType)
-  const base = (() => {
-    switch (cat) {
-      case 'int32':
-        return 'number'
-      case 'int64':
-        return 'number'
-      case 'double':
-        return 'number'
-      case 'bool':
-        return 'boolean'
-      case 'string':
-        return 'string'
-      case 'buffer':
-        return 'Buffer'
-      case 'void':
-        return 'void'
-      case 'callback':
-        return '(...args: any[]) => void'
-      default:
-        return 'unknown'
-    }
-  })()
-  return nullable && base !== 'void' ? `${base} | null` : base
-}
-
-export function tsParamType(param: SwiftParam): string {
-  if (param.transport === 'data' || param.transport === 'borrowed') return 'Uint8Array'
-  return param.nativeType
-    ? tsTypeFromNative(param.nativeType, param.transport === 'json')
-    : tsType(param.type)
-}
-
-export function tsReturnType(fn: SwiftFunction, structs: SwiftStruct[]): string {
-  const nativeType = wireReturnType(fn)
-  if (fn.returnTransport === 'data') return 'Uint8Array'
-  if (fn.returnTransport)
-    return fn.nativeReturnType
-      ? tsTypeFromNative(nativeType, fn.returnTransport === 'json')
-      : tsType(fn.returnType)
-  const struct = findStruct(nativeType, structs)
-  if (struct) return struct.name
-  return fn.nativeReturnType ? tsTypeFromNative(nativeType) : tsType(fn.returnType)
-}
-
-export function tsCallbackType(swiftType: string): string {
-  const cb = parseCallbackType(swiftType)
-  if (!cb) return '(...args: any[]) => void'
-
-  const params = cb.params.map((p, i) => {
-    const cat = p.type
-    let tsT = 'any'
-    if (cat === 'string') tsT = isNullableType(p.swiftType) ? 'string | null' : 'string'
-    else if (cat === 'int32') tsT = 'number'
-    else if (cat === 'int64') tsT = 'number'
-    else if (cat === 'double') tsT = 'number'
-    else if (cat === 'bool') tsT = 'boolean'
-    else if (cat === 'buffer') tsT = 'Float32Array'
-    return `arg${i}: ${tsT}`
-  })
-
-  if (cb.isAsync && cb.throws && cb.returnType === 'String') {
-    return `(${params.join(', ')}) => string | Promise<string>`
-  }
-
-  return `(${params.join(', ')}) => void`
-}
-
-// Does this function use an error output parameter?
-export function hasErrorOutParam(fn: SwiftFunction): boolean {
-  return fn.params.some((p) => p.type.includes('UnsafeMutablePointer<UnsafePointer<CChar>?>'))
 }
 
 // Filter out error output params and callback params for the JS-facing signature count
@@ -353,11 +200,6 @@ export function jsParams(fn: SwiftFunction): SwiftParam[] {
       !p.callbackContext &&
       !p.promiseCallbackRelease,
   )
-}
-
-// Check if function has a callback parameter
-export function getCallbackParam(fn: SwiftFunction): SwiftParam | null {
-  return fn.params.find((p) => isCallbackType(p.type)) || null
 }
 
 export function promiseCallbackInfo(type: string): PromiseCallbackInfo | null {

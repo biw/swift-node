@@ -2,6 +2,7 @@ import {
   ExportedFunction,
   SwiftFunction,
   SwiftParam,
+  SwiftStruct,
   classifyNativeSwiftType,
   parseSwiftStreamReturnType,
 } from '../../parser.js'

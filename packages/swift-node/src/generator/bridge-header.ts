@@ -1,19 +1,9 @@
 import {
-  BridgeTransport,
-  SwiftFunction,
-  SwiftParam,
-  SwiftStruct,
-  SwiftStructField,
-  PromiseCallbackInfo,
-  bridgeTransportForType,
-  classifySwiftType,
-  SwiftTypeCategory,
+  type SwiftFunction,
+  type SwiftStruct,
   isCallbackType,
   parseCallbackType,
-  ExportedFunction,
   classifyNativeSwiftType,
-  parseSwiftStreamReturnType,
-  splitParams,
 } from '../parser.js'
 
 import {
