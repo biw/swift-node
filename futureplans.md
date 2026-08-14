@@ -131,22 +131,10 @@ values separately. Every long-lived callback shape must define:
 - isolation tests for concurrent invocations and cleanup on every terminal
   path.
 
-## Codebase maintenance and verification
-
-### Maintain an executable bridge-test matrix
-
-For every supported transport and execution mode, maintain at least one test
-that builds and loads a real compiled addon, rather than relying exclusively on
-generated-source or parser unit tests. The matrix should cover synchronous and
-async exports, actor hops, `Codable`, direct structs, binary transports,
-streams (value, error, completion, and cancellation), and long-lived Promise
-callbacks. Add a row whenever a bridge feature is introduced, and use the
-matrix to identify unit-tested paths that still lack executable coverage.
-
 ## Suggested sequencing
 
-1. Establish the executable test matrix and structured error contract so future
-   transport work has observable, regression-resistant behavior.
+1. Establish the structured error contract so future transport work has
+   observable, regression-resistant behavior.
 2. Complete stream inference and an `AsyncIterable` protocol before widening
    streams to `AsyncSequence` and binary elements.
 3. Broaden declaration and direct-struct support only after their representation

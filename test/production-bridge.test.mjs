@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { beforeAll, describe, it } from 'vite-plus/test'
 import { commandInvocation } from './command.mjs'
+import { assertExecutableBridgeMatrix, executableBridgeMatrix } from './bridge-matrix.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cli = path.join(rootDir, 'packages', 'swift-node', 'bin', 'swift-node.js')
@@ -287,6 +288,113 @@ setTimeout(() => {
     process.exit(0)
   }, 100)
 }, 100)
+`,
+  },
+  {
+    // The stored callback must survive the JavaScript call that installs it,
+    // and Swift must await the Promise it returns on later, concurrent calls.
+    name: 'long-lived-promise-callback',
+    source: `import Foundation
+
+private let promiseCallbackLock = NSLock()
+private var installedPromiseCallback: ((String) async throws -> String)?
+
+// @swift-node:export
+func installPromiseCallback(_ callback: @escaping (String) async throws -> String) {
+    promiseCallbackLock.lock()
+    installedPromiseCallback = callback
+    promiseCallbackLock.unlock()
+}
+
+// @swift-node:export
+func clearPromiseCallback() {
+    promiseCallbackLock.lock()
+    installedPromiseCallback = nil
+    promiseCallbackLock.unlock()
+}
+
+// @swift-node:export
+func invokeInstalledPromiseCallback(_ value: String, _ onResult: @escaping (String) -> Void) {
+    promiseCallbackLock.lock()
+    let callback = installedPromiseCallback
+    promiseCallbackLock.unlock()
+
+    Task {
+        do {
+            onResult(try await callback?(value) ?? "no callback")
+        } catch {
+            onResult("error:\\(error.localizedDescription)")
+        }
+    }
+}
+`,
+    typeAssertion: `import {
+  clearPromiseCallback,
+  installPromiseCallback,
+  invokeInstalledPromiseCallback,
+} from './dist_swift-node/index.mjs'
+
+installPromiseCallback(async (value: string): Promise<string> => value.toUpperCase())
+invokeInstalledPromiseCallback('value', (result: string): void => { void result })
+clearPromiseCallback()
+`,
+    assertion: `
+    const addon = await import('./dist_swift-node/index.mjs')
+    const invoke = value => new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Promise callback timed out')), 1_000)
+      addon.invokeInstalledPromiseCallback(value, result => {
+        clearTimeout(timeout)
+        resolve(result)
+      })
+    })
+
+    addon.installPromiseCallback(async value => {
+      await new Promise(resolve => setTimeout(resolve, value === 'slow' ? 20 : 5))
+      return value.toUpperCase()
+    })
+    const values = await Promise.all([invoke('slow'), invoke('fast')])
+    if (values.join(',') !== 'SLOW,FAST') {
+      throw new Error('long-lived Promise callbacks lost concurrent results: ' + JSON.stringify(values))
+    }
+
+    addon.installPromiseCallback(async () => {
+      throw new Error('handler failed')
+    })
+    const rejected = await invoke('failure')
+    if (!rejected.includes('handler failed')) {
+      throw new Error('Promise callback rejection did not reach Swift: ' + rejected)
+    }
+
+    addon.clearPromiseCallback()
+    if (await invoke('after-clear') !== 'no callback') {
+      throw new Error('clearing a long-lived Promise callback did not release it')
+    }
+  `,
+    postAssertion: `const addon = require('./dist_swift-node/index.cjs')
+
+let callback = async value => value.toUpperCase()
+const callbackRef = new WeakRef(callback)
+addon.installPromiseCallback(callback)
+callback = null
+addon.clearPromiseCallback()
+
+function fail(message) {
+  console.error(message)
+  process.exit(1)
+}
+
+function verifyReleasedCallback(attempt = 0) {
+  global.gc()
+  setTimeout(() => {
+    if (callbackRef.deref()) {
+      if (attempt < 20) return setTimeout(() => verifyReleasedCallback(attempt + 1), 0)
+      return fail('cleared Promise callback was retained by the addon')
+    }
+    process.exit(0)
+  }, 0)
+}
+
+verifyReleasedCallback()
 `,
   },
   {
@@ -941,6 +1049,15 @@ if (selectedCase && selectedCases.length === 0) {
 
 describe.sequential('production bridge', () => {
   beforeAll(() => run('vp', ['-C', 'packages/swift-node', 'pack'], rootDir), 180_000)
+
+  if (!selectedCase) {
+    it('maintains the executable bridge-test matrix', () => {
+      assertExecutableBridgeMatrix(cases)
+      if (executableBridgeMatrix.length === 0) {
+        throw new Error('the executable bridge-test matrix must not be empty')
+      }
+    })
+  }
 
   for (const testCase of selectedCases) {
     it(testCase.name, () => runCase(testCase), 180_000)
