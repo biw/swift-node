@@ -215,7 +215,6 @@ export function promiseCallbackInfo(type: string): PromiseCallbackInfo | null {
   return { params: callback.params, returnType: callback.returnType }
 }
 
-
 // --- Bridge header generation ---
 
 export function findStruct(typeName: string, structs: SwiftStruct[]): SwiftStruct | undefined {

@@ -41,7 +41,8 @@ export const executableBridgeMatrix = Object.freeze([
   },
   {
     id: 'long-lived-promise-callbacks',
-    description: 'Swift retains Promise-returning callbacks across calls and releases them explicitly.',
+    description:
+      'Swift retains Promise-returning callbacks across calls and releases them explicitly.',
     caseNames: ['long-lived-promise-callback'],
   },
   {
@@ -80,9 +81,13 @@ export function assertExecutableBridgeMatrix(productionCases) {
   }
 
   const failures = []
-  if (duplicatedCases.size > 0) failures.push(`duplicate production cases: ${[...duplicatedCases].join(', ')}`)
-  if (duplicatedRows.size > 0) failures.push(`duplicate matrix rows: ${[...duplicatedRows].join(', ')}`)
-  if (emptyRows.size > 0) failures.push(`matrix rows without executable cases: ${[...emptyRows].join(', ')}`)
-  if (missingCases.length > 0) failures.push(`matrix rows without a compiled-addon case: ${missingCases.join(', ')}`)
+  if (duplicatedCases.size > 0)
+    failures.push(`duplicate production cases: ${[...duplicatedCases].join(', ')}`)
+  if (duplicatedRows.size > 0)
+    failures.push(`duplicate matrix rows: ${[...duplicatedRows].join(', ')}`)
+  if (emptyRows.size > 0)
+    failures.push(`matrix rows without executable cases: ${[...emptyRows].join(', ')}`)
+  if (missingCases.length > 0)
+    failures.push(`matrix rows without a compiled-addon case: ${missingCases.join(', ')}`)
   if (failures.length > 0) throw new Error(failures.join('\n'))
 }

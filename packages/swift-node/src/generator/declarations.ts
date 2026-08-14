@@ -9,12 +9,7 @@ import {
   splitParams,
 } from '../parser.js'
 
-import {
-  findStruct,
-  isNullableType,
-  jsName,
-  jsParams,
-} from './shared.js'
+import { findStruct, isNullableType, jsName, jsParams } from './shared.js'
 
 // --- TypeScript definition generation ---
 

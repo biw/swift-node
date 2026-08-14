@@ -10,8 +10,4 @@ export { generateBridgeH, generateStructsHeader } from './bridge-header.js'
 export { generateAddonCpp } from './addon.js'
 export { exportedToSwiftFunctions, generateWrappersSwift } from './swift-wrapper/index.js'
 export { generateDts, generateDtsCjs } from './declarations.js'
-export {
-  generateEntryCjs,
-  generateEntryMjs,
-  generateSourceEntryTs,
-} from './entrypoints.js'
+export { generateEntryCjs, generateEntryMjs, generateSourceEntryTs } from './entrypoints.js'

@@ -470,10 +470,7 @@ function generateCallbackTrampoline(fn: SwiftFunction, cbParam: SwiftParam): str
   return lines.join('\n')
 }
 
-function generateJsWrapper(
-  fn: SwiftFunction,
-  structs: SwiftStruct[] = [],
-): string {
+function generateJsWrapper(fn: SwiftFunction, structs: SwiftStruct[] = []): string {
   if (getCallbackParam(fn)) {
     return generateCallbackWrapper(fn)
   }
@@ -1687,7 +1684,6 @@ function generateStructFree(s: SwiftStruct): string {
   lines.push(`}`)
   return lines.join('\n')
 }
-
 
 function generateStreamSubscriptionCpp(fn: SwiftFunction, structs: SwiftStruct[]): string {
   const stream = fn.stream!

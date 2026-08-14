@@ -1999,7 +1999,12 @@ describe('generator facade regression contract', () => {
     ]
     const structs = [profileStruct]
     const codableTypes = ['Request', 'Response', 'Event']
-    const functions = exportedToSwiftFunctions(exported, 'regression_contract', structs, codableTypes)
+    const functions = exportedToSwiftFunctions(
+      exported,
+      'regression_contract',
+      structs,
+      codableTypes,
+    )
 
     expect({
       cdeclFunctions: JSON.stringify(functions, null, 2),
