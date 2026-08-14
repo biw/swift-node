@@ -22,21 +22,39 @@ export function assertMatchingPackageVersions(packages) {
   return packages[0].version
 }
 
+export function assertSwiftNodeUnpluginPeerVersion(packages) {
+  const swiftNode = packages.find(({ name }) => name === 'swift-node')
+  const unplugin = packages.find(({ name }) => name === 'swift-node-unplugin')
+  if (!swiftNode || !unplugin) {
+    throw new Error('Release packages must include swift-node and swift-node-unplugin')
+  }
+
+  const expectedPeerVersion = `^${swiftNode.version}`
+  const peerVersion = unplugin.peerDependencies?.['swift-node']
+  if (peerVersion !== expectedPeerVersion) {
+    throw new Error(
+      `swift-node-unplugin peerDependencies.swift-node must be ${expectedPeerVersion}; received ${peerVersion ?? '(missing)'}`,
+    )
+  }
+}
+
 export async function checkReleasePackageVersions(manifestPaths = releasePackageManifestPaths) {
   const packages = await Promise.all(
     manifestPaths.map(async (manifestPath) => {
       const contents = await readFile(path.join(rootDirectory, manifestPath), 'utf8')
-      const { name, version } = JSON.parse(contents)
+      const { name, version, peerDependencies } = JSON.parse(contents)
 
       if (typeof name !== 'string' || typeof version !== 'string') {
         throw new Error(`${manifestPath} must define string name and version fields`)
       }
 
-      return { name, version }
+      return { name, version, peerDependencies }
     }),
   )
 
-  return assertMatchingPackageVersions(packages)
+  const version = assertMatchingPackageVersions(packages)
+  assertSwiftNodeUnpluginPeerVersion(packages)
+  return version
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

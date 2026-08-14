@@ -23,7 +23,11 @@ export function gitignoreTemplate(
           '!.yarn/versions',
         ]
       : ['node_modules/', ...(packageManager === 'pnpm' ? ['.pnpm-store/'] : [])]
-  const buildOutput = ['dist_swift-node/', ...(useTsdown ? ['dist/'] : [])]
+  const buildOutput = [
+    'dist_swift-node/',
+    '.swift-node-build.lock/',
+    ...(useTsdown ? ['dist/'] : []),
+  ]
   const logs =
     packageManager === 'yarn'
       ? ['yarn-debug.log*', 'yarn-error.log*']

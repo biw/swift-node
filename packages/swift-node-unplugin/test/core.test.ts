@@ -13,10 +13,11 @@ import { describe, expect, it } from 'vite-plus/test'
 import {
   findNativeBinaries,
   findSwiftRuntimeLibraries,
+  ensureSwiftNodeBuild,
   moduleNameForPackage,
+  nativeBuildPackageConfiguration,
   nativeAssetFileName,
   runSwiftNodeBuild,
-  swiftBuildFingerprint,
   swiftWatchFiles,
 } from '../src/core'
 
@@ -95,16 +96,20 @@ describe('Swift Node artifact discovery', () => {
     })
   })
 
-  it('changes the build fingerprint when Swift source contents change', async () => {
+  it('tracks only package settings relevant to native output', async () => {
     await withProject((projectDir) => {
       writePackage(projectDir)
-      const sourceDirectory = path.join(projectDir, 'src')
-      mkdirSync(sourceDirectory)
-      const sourcePath = path.join(sourceDirectory, 'native.swift')
-      writeFileSync(sourcePath, 'func value() -> Int { 1 }')
-      const before = swiftBuildFingerprint(projectDir)
-      writeFileSync(sourcePath, 'func value() -> Int { 2 }')
-      expect(swiftBuildFingerprint(projectDir)).not.toBe(before)
+      const before = nativeBuildPackageConfiguration(projectDir)
+      writeFileSync(
+        path.join(projectDir, 'package.json'),
+        JSON.stringify({ name: '@scope/my-addon', description: 'changed' }),
+      )
+      expect(nativeBuildPackageConfiguration(projectDir)).toBe(before)
+      writeFileSync(
+        path.join(projectDir, 'package.json'),
+        JSON.stringify({ name: '@scope/my-addon', swiftNode: { shipSwiftRuntime: false } }),
+      )
+      expect(nativeBuildPackageConfiguration(projectDir)).not.toBe(before)
     })
   })
 
@@ -148,6 +153,32 @@ describe('project-local swift-node build', () => {
       const nativePath = path.join(projectDir, 'dist_swift-node', 'my_addon.darwin-arm64.node')
       expect(existsSync(nativePath)).toBe(true)
       expect(readFileSync(nativePath, 'utf8')).toBe('build')
+    })
+  })
+
+  it('does not retain completed builds as an unplugin cache entry', async () => {
+    await withProject(async (projectDir) => {
+      const swiftNodeDirectory = path.join(projectDir, 'node_modules', 'swift-node')
+      const binDirectory = path.join(swiftNodeDirectory, 'bin')
+      mkdirSync(binDirectory, { recursive: true })
+      writePackage(projectDir)
+      writeFileSync(
+        path.join(swiftNodeDirectory, 'package.json'),
+        JSON.stringify({ bin: { 'swift-node': 'bin/swift-node.js' } }),
+      )
+      const binPath = path.join(binDirectory, 'swift-node.js')
+      writeFileSync(
+        binPath,
+        `import { appendFileSync } from 'node:fs'
+appendFileSync('swift-builds.txt', 'build\\n')
+`,
+      )
+      chmodSync(binPath, 0o755)
+
+      await ensureSwiftNodeBuild(projectDir)
+      await ensureSwiftNodeBuild(projectDir)
+
+      expect(readFileSync(path.join(projectDir, 'swift-builds.txt'), 'utf8')).toBe('build\nbuild\n')
     })
   })
 })

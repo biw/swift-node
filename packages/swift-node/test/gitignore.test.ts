@@ -8,6 +8,7 @@ describe('generated .gitignore', () => {
     expect(template.entries).toEqual([
       'node_modules/',
       'dist_swift-node/',
+      '.swift-node-build.lock/',
       'npm-debug.log*',
       '.DS_Store',
     ])
@@ -18,6 +19,7 @@ describe('generated .gitignore', () => {
       'node_modules/',
       '.pnpm-store/',
       'dist_swift-node/',
+      '.swift-node-build.lock/',
       'dist/',
       'pnpm-debug.log*',
       '.DS_Store',
@@ -25,6 +27,7 @@ describe('generated .gitignore', () => {
     expect(gitignoreTemplate('bun', false).entries).toEqual([
       'node_modules/',
       'dist_swift-node/',
+      '.swift-node-build.lock/',
       'bun-debug.log*',
       '.DS_Store',
     ])

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist_swift-node/
+.swift-node-build.lock/
 .context/
 
 # Local smoke-test and package-manager artifacts

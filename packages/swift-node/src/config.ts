@@ -43,6 +43,7 @@ function findSwiftSources(projectDir: string): string[] {
 
   const files = readdirSync(srcDir)
     .filter((f) => f.endsWith('.swift'))
+    .sort()
     .map((f) => path.join('src', f))
 
   if (files.length === 0) {
