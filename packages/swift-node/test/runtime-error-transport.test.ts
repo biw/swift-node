@@ -194,7 +194,12 @@ describe('structured error runtime transport', () => {
   }, 180_000)
 
   afterAll(() => {
-    if (fixtureDirectory) rmSync(fixtureDirectory, { recursive: true, force: true })
+    // Windows keeps a loaded .node DLL locked until this Node process exits.
+    // Its temporary-directory cleanup runs after exit, while other platforms
+    // can release the fixture immediately.
+    if (fixtureDirectory && process.platform !== 'win32') {
+      rmSync(fixtureDirectory, { recursive: true, force: true })
+    }
   })
 
   it('preserves a valid structured envelope for sync and async callers', async () => {
