@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vite-plus/test'
-import { compileCpp, link, type CompilerConfig } from '../src/compiler'
+import { compileCpp, compileSwift, link, type CompilerConfig } from '../src/compiler'
 import { nativeTargetId } from '../src/prebuild'
 
 interface RuntimeErrorFixture {
@@ -107,6 +107,13 @@ static napi_value init(napi_env env, napi_value exports) {
 NAPI_MODULE(NODE_GYP_MODULE_NAME, init)
 `
 
+// Keep this fixture on the same Swift linker path as a real swift-node addon.
+// Windows' Swift driver needs a Swift object to carry the runtime's linker inputs.
+const fixtureSwiftSource = String.raw`
+@_cdecl("swift_node_runtime_error_fixture_link_anchor")
+public func swift_node_runtime_error_fixture_link_anchor() {}
+`
+
 const captureThrown = (operation: () => never): Error => {
   try {
     operation()
@@ -166,7 +173,7 @@ describe('structured error runtime transport', () => {
     const config: CompilerConfig = {
       moduleName: 'runtime_error_fixture',
       binaryName,
-      swiftSources: [],
+      swiftSources: ['fixture.swift'],
       projectDir: fixtureDirectory,
       intermediateDir: fixtureDirectory,
       buildDir: fixtureDirectory,
@@ -178,8 +185,10 @@ describe('structured error runtime transport', () => {
 
     mkdirSync(fixtureDirectory, { recursive: true })
     writeFileSync(path.join(fixtureDirectory, 'addon.cpp'), fixtureSource)
+    writeFileSync(path.join(fixtureDirectory, 'fixture.swift'), fixtureSwiftSource)
+    const swiftObject = compileSwift(config)
     const addonObject = compileCpp(config)
-    const addonPath = link(config, [addonObject])
+    const addonPath = link(config, [swiftObject, addonObject])
     const nodeRequire = createRequire(import.meta.url)
     fixture = nodeRequire(addonPath) as RuntimeErrorFixture
   }, 180_000)
