@@ -14,7 +14,7 @@ import {
   parseCallbackType,
   parseSwiftStreamReturnType,
 } from './parser.js'
-import { cppIdentifier } from './generator.js'
+import { cppIdentifier } from './generator/index.js'
 
 export interface ValidationError {
   message: string

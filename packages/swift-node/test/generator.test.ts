@@ -16,7 +16,7 @@ import {
   generateEntryMjs,
   generateEntryCjs,
   generateSourceEntryTs,
-} from '../src/generator'
+} from '../src/generator/index'
 import { nativeTargetId } from '../src/prebuild'
 import type { SwiftFunction, SwiftStruct, ExportedFunction } from '../src/parser'
 
