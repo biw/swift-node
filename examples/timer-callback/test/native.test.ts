@@ -239,8 +239,9 @@ describe('timer-callback', () => {
 
     it('delivers stream failures once and does not report normal completion', async () => {
       const values: string[] = []
+      let subscription: { readonly closed: boolean } | undefined
       const error = await new Promise<Error>((resolve, reject) => {
-        addon.streamFailure(
+        subscription = addon.streamFailure(
           (value: string) => values.push(value),
           resolve,
           () => reject(new Error('unexpected completion')),
@@ -249,6 +250,7 @@ describe('timer-callback', () => {
 
       expect(values).toEqual(['before-error'])
       expect(error.message).toBe('expected stream failure')
+      expect(subscription!.closed).toBe(true)
     })
 
     it('cleans live subscriptions during addon teardown', () => {
