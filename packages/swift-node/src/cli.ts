@@ -42,7 +42,7 @@ import {
   generateEntryMjs,
   generateEntryCjs,
   generateSourceEntryTs,
-} from './generator.js'
+} from './generator/index.js'
 import {
   compileSwift,
   compileCpp,

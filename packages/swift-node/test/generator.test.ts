@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { describe, it, expect } from 'vite-plus/test'
 import {
+  cppIdentifier,
   generateBridgeH,
   generateAddonCpp,
   generateDts,
@@ -15,7 +16,7 @@ import {
   generateEntryMjs,
   generateEntryCjs,
   generateSourceEntryTs,
-} from '../src/generator'
+} from '../src/generator/index'
 import { nativeTargetId } from '../src/prebuild'
 import type { SwiftFunction, SwiftStruct, ExportedFunction } from '../src/parser'
 
@@ -1949,5 +1950,117 @@ describe('generated addon resolver', () => {
 describe('generated local entry point', () => {
   it('re-exports the generated runtime from the source entry point', () => {
     expect(generateSourceEntryTs()).toBe("export * from '../dist_swift-node/index.mjs'\n")
+  })
+})
+
+describe('generator facade regression contract', () => {
+  it('keeps every public generator output byte-for-byte stable for a mixed bridge surface', () => {
+    const exported: ExportedFunction[] = [
+      {
+        name: 'renameProfile',
+        params: [{ label: '_', name: 'profile', type: 'Profile' }],
+        returnType: 'Profile',
+        throws: false,
+        isAsync: false,
+        line: 1,
+      },
+      {
+        name: 'respond',
+        params: [{ label: '_', name: 'request', type: 'Request' }],
+        returnType: 'Response',
+        throws: true,
+        isAsync: false,
+        line: 2,
+      },
+      {
+        name: 'checksum',
+        params: [{ label: '_', name: 'bytes', type: 'UnsafeRawBufferPointer' }],
+        returnType: 'Int',
+        throws: false,
+        isAsync: false,
+        line: 3,
+      },
+      {
+        name: 'reverseData',
+        params: [{ label: '_', name: 'input', type: 'Data' }],
+        returnType: 'Data',
+        throws: false,
+        isAsync: true,
+        line: 4,
+      },
+      {
+        name: 'events',
+        params: [{ label: '_', name: 'topic', type: 'String' }],
+        returnType: 'AsyncThrowingStream<Event, Error>',
+        throws: false,
+        isAsync: false,
+        isStream: true,
+        line: 5,
+      },
+      {
+        name: 'notify',
+        params: [
+          { label: '_', name: 'value', type: 'String' },
+          {
+            label: '_',
+            name: 'callback',
+            type: '@escaping (String, Int, Bool, Double) -> Void',
+          },
+        ],
+        returnType: 'Void',
+        throws: false,
+        isAsync: false,
+        line: 6,
+      },
+      {
+        name: 'installPromiseCallback',
+        params: [
+          {
+            label: '_',
+            name: 'callback',
+            type: '@escaping (String) async throws -> String',
+          },
+        ],
+        returnType: 'Void',
+        throws: false,
+        isAsync: false,
+        line: 7,
+      },
+    ]
+    const structs = [profileStruct]
+    const codableTypes = ['Request', 'Response', 'Event']
+    const functions = exportedToSwiftFunctions(
+      exported,
+      'regression_contract',
+      structs,
+      codableTypes,
+    )
+
+    expect({
+      cdeclFunctions: JSON.stringify(functions, null, 2),
+      structsHeader: generateStructsHeader(structs),
+      bridgeHeader: generateBridgeH(functions, 'regression_contract', structs),
+      swiftWrappers: generateWrappersSwift(exported, 'regression_contract', structs, codableTypes),
+      addonCpp: generateAddonCpp(functions, 'regression_contract', structs),
+      dts: generateDts(functions, 'regression_contract', structs),
+      dtsCjs: generateDtsCjs(functions, 'regression_contract', structs),
+      entryMjs: generateEntryMjs(functions, 'regression_contract'),
+      entryCjs: generateEntryCjs(functions, 'regression_contract'),
+      sourceEntryTs: generateSourceEntryTs(),
+    }).toMatchSnapshot()
+  })
+
+  it('keeps the complete public facade available at the established import path', () => {
+    expect(cppIdentifier('class')).toBe('_swift_node_class')
+    expect(typeof generateBridgeH).toBe('function')
+    expect(typeof generateAddonCpp).toBe('function')
+    expect(typeof generateDts).toBe('function')
+    expect(typeof generateDtsCjs).toBe('function')
+    expect(typeof generateStructsHeader).toBe('function')
+    expect(typeof generateWrappersSwift).toBe('function')
+    expect(typeof exportedToSwiftFunctions).toBe('function')
+    expect(typeof generateEntryMjs).toBe('function')
+    expect(typeof generateEntryCjs).toBe('function')
+    expect(typeof generateSourceEntryTs).toBe('function')
   })
 })

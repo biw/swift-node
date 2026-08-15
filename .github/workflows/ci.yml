@@ -17,7 +17,25 @@ jobs:
         with:
           node-version: '24'
 
-      - run: node scripts/run-without-node-warnings.mjs node scripts/check-package-versions.mjs
+      - name: Fetch main version baseline
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Fetch previous version baseline
+        if: >-
+          github.event_name == 'push' &&
+          github.event.before != '0000000000000000000000000000000000000000'
+        run: git fetch --no-tags origin ${{ github.event.before }}
+
+      - name: Check release package versions
+        env:
+          BASELINE_REF: >-
+            ${{ github.event_name == 'pull_request' && 'origin/main' ||
+            (github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '') }}
+        run: |
+          command=(node scripts/run-without-node-warnings.mjs node scripts/check-package-versions.mjs)
+          if [[ -n "$BASELINE_REF" ]]; then command+=(--baseline-ref "$BASELINE_REF"); fi
+          "${command[@]}"
 
   quality:
     name: Format, lint, and type check
@@ -56,12 +74,9 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Install Swift toolchain
+      - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
-        uses: compnerd/gha-setup-swift@v0.4.0
-        with:
-          swift-version: swift-6.3.3-release
-          swift-build: 6.3.3-RELEASE
+        uses: ./.github/actions/setup-windows-toolchain
 
       - run: node scripts/run-without-node-warnings.mjs vp install
       - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node pack
@@ -92,12 +107,9 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Install Swift toolchain
+      - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
-        uses: compnerd/gha-setup-swift@v0.4.0
-        with:
-          swift-version: swift-6.3.3-release
-          swift-build: 6.3.3-RELEASE
+        uses: ./.github/actions/setup-windows-toolchain
 
       - name: Verify toolchain
         run: |
@@ -147,13 +159,6 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Install Swift toolchain
-        if: runner.os == 'Windows'
-        uses: compnerd/gha-setup-swift@v0.4.0
-        with:
-          swift-version: swift-6.3.3-release
-          swift-build: 6.3.3-RELEASE
-
       - name: Verify toolchain
         run: |
           swiftc --version
@@ -201,12 +206,9 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Install Swift toolchain
+      - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
-        uses: compnerd/gha-setup-swift@v0.4.0
-        with:
-          swift-version: swift-6.3.3-release
-          swift-build: 6.3.3-RELEASE
+        uses: ./.github/actions/setup-windows-toolchain
 
       - name: Verify toolchain
         run: |
@@ -250,12 +252,9 @@ jobs:
           node-version: '24'
           cache: true
 
-      - name: Install Swift toolchain
+      - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
-        uses: compnerd/gha-setup-swift@v0.4.0
-        with:
-          swift-version: swift-6.3.3-release
-          swift-build: 6.3.3-RELEASE
+        uses: ./.github/actions/setup-windows-toolchain
 
       - name: Verify toolchain
         run: |
