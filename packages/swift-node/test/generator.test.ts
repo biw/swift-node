@@ -788,6 +788,16 @@ describe('generateAddonCpp', () => {
 // --- TypeScript definition tests ---
 
 describe('generateDts', () => {
+  it('exports structured error and JSON value types', () => {
+    const dts = generateDts([divideFn], 'test')
+
+    expect(dts).toContain('export type SwiftNodeJSONValue =')
+    expect(dts).toContain('readonly SwiftNodeJSONValue[]')
+    expect(dts).toContain('export interface SwiftNodeStructuredError extends Error')
+    expect(dts).toContain('readonly code: string')
+    expect(dts).toContain('readonly details: { readonly [key: string]: SwiftNodeJSONValue }')
+  })
+
   it('uses JavaScript-friendly types for JSON and Data transports', () => {
     const fn: SwiftFunction = {
       symbolName: 'test_process',
@@ -994,6 +1004,14 @@ describe('generateDts', () => {
 })
 
 describe('generateDtsCjs', () => {
+  it('declares structured error types for CommonJS consumers', () => {
+    const dts = generateDtsCjs([divideFn], 'test')
+
+    expect(dts).toContain('type SwiftNodeJSONValue =')
+    expect(dts).toContain('interface SwiftNodeStructuredError extends Error')
+    expect(dts).toContain('readonly code: string')
+  })
+
   it('generates CommonJS declarations for require consumers', () => {
     const dts = generateDtsCjs([addFn, greetFn], 'test')
     expect(dts).toContain('declare namespace native')
@@ -1098,6 +1116,18 @@ const exportLabeledFn: ExportedFunction = {
 }
 
 describe('generateWrappersSwift', () => {
+  it('provides an opt-in structured error protocol and JSON-safe details', () => {
+    const output = generateWrappersSwift([exportThrowingFn], 'math')
+
+    expect(output).toContain('public protocol SwiftNodeStructuredError: Error')
+    expect(output).toContain('var code: String { get }')
+    expect(output).toContain('var message: String { get }')
+    expect(output).toContain('var details: [String: SwiftNodeJSONValue] { get }')
+    expect(output).toContain('public indirect enum SwiftNodeJSONValue: Sendable')
+    expect(output).toContain('case array([SwiftNodeJSONValue])')
+    expect(output).toContain('case object([String: SwiftNodeJSONValue])')
+  })
+
   it('bridges Codable values through JSON and exposes an error channel', () => {
     const fn: ExportedFunction = {
       name: 'respond',
@@ -1197,7 +1227,7 @@ describe('generateWrappersSwift', () => {
         '    do {',
         '        swift_value = try JSONDecoder().decode([String].self, from: Data(String(cString: value).utf8))',
         '    } catch {',
-        '        out_error.pointee = UnsafeMutablePointer(mutating: strdup("swift-node could not encode or decode a bridged value")!)',
+        '        out_error.pointee = swiftNodeBridgeError("swift-node could not encode or decode a bridged value")',
         '        return',
         '    }',
       ].join('\n'),
@@ -1207,7 +1237,7 @@ describe('generateWrappersSwift', () => {
       type: 'Data',
       failurePath: [
         '    guard let swift_value = Data(base64Encoded: String(cString: value)) else {',
-        '        out_error.pointee = UnsafeMutablePointer(mutating: strdup("swift-node could not encode or decode a bridged value")!)',
+        '        out_error.pointee = swiftNodeBridgeError("swift-node could not encode or decode a bridged value")',
         '        return',
         '    }',
       ].join('\n'),
@@ -1243,7 +1273,7 @@ describe('generateWrappersSwift', () => {
         '    do {',
         '        swift_items = try JSONDecoder().decode([String].self, from: Data(String(cString: items).utf8))',
         '    } catch {',
-        '        out_error.pointee = UnsafeMutablePointer(mutating: strdup("swift-node could not encode or decode a bridged value")!)',
+        '        out_error.pointee = swiftNodeBridgeError("swift-node could not encode or decode a bridged value")',
         '        return swift_node_Profile()',
         '    }',
       ].join('\n'),
@@ -1264,7 +1294,7 @@ describe('generateWrappersSwift', () => {
     expect(output).toContain(
       [
         '    } catch {',
-        '        out_error.pointee = UnsafeMutablePointer(mutating: strdup(error.localizedDescription)!)',
+        '        out_error.pointee = swiftNodeBridgeError(error)',
         '        return swift_node_Profile()',
         '    }',
       ].join('\n'),
@@ -1283,7 +1313,7 @@ describe('generateWrappersSwift', () => {
     const output = generateWrappersSwift([fn], 'models')
     expect(output).toContain('let semaphore = DispatchSemaphore(value: 0)')
     expect(output).toContain('asyncResult = try await respond(')
-    expect(output).toContain('out_error.pointee')
+    expect(output).toContain('out_error.pointee = swiftNodeBridgeError(asyncError)')
   })
 
   it('runs MainActor exports synchronously on Node’s main thread', () => {
@@ -1350,7 +1380,7 @@ describe('generateWrappersSwift', () => {
     expect(output).toContain('do {')
     expect(output).toContain('try divide(')
     expect(output).toContain('} catch {')
-    expect(output).toContain('strdup(error.localizedDescription)')
+    expect(output).toContain('swiftNodeBridgeError(error)')
     expect(output).toContain('return 0')
   })
 

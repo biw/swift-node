@@ -74,7 +74,9 @@ private func swiftNodeStreamComplete(
         callback(subscriptionID, nil)
         return
     }
-    error.localizedDescription.withCString { callback(subscriptionID, $0) }
+    let encoded = swiftNodeBridgeError(error)
+    defer { free(encoded) }
+    callback(subscriptionID, UnsafePointer(encoded))
 }`
 }
 

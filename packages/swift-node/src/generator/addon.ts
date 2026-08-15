@@ -641,17 +641,7 @@ function generateAsyncWrapper(fn: SwiftFunction): string {
 
   if (hasError) {
     lines.push('    if (ctx->swift_error) {')
-    lines.push('        napi_value message;')
-    lines.push(
-      '        bool message_ok = swift_node_napi_ok(env, swift_node_create_string(env, ctx->swift_error, &message), "Failed to create Swift error message");',
-    )
-    lines.push('        free(const_cast<char*>(ctx->swift_error));')
-    lines.push('        if (message_ok) {')
-    lines.push('            napi_value error;')
-    lines.push(
-      '            if (swift_node_napi_ok(env, napi_create_error(env, nullptr, message, &error), "Failed to create Swift error")) napi_reject_deferred(env, ctx->deferred, error);',
-    )
-    lines.push('        }')
+    lines.push('        swift_node_reject_swift_error(env, ctx->deferred, ctx->swift_error);')
     if (retCat === 'string') lines.push('        free(const_cast<char*>(ctx->result));')
     lines.push(`        napi_delete_async_work(env, ctx->work);`)
     lines.push('        delete ctx;')
@@ -1826,11 +1816,8 @@ function generateStreamSubscriptionCpp(fn: SwiftFunction, structs: SwiftStruct[]
   }
   lines.push(`        invoke_stream_handler_${prefix}(env, state->on_value, 1, &argument);`)
   lines.push(`    } else if (message->kind == stream_message_error_${prefix}) {`)
-  lines.push('        napi_value text;')
-  lines.push('        napi_value error;')
-  lines.push(
-    '        if (swift_node_napi_ok(env, swift_node_create_string(env, message->error ? message->error : "Stream failed", &text), "Failed to create stream error") && swift_node_napi_ok(env, napi_create_error(env, nullptr, text, &error), "Failed to create stream error")) {',
-  )
+  lines.push('        napi_value error = swift_node_error_from_swift_payload(env, message->error);')
+  lines.push('        if (error) {')
   lines.push(`            invoke_stream_handler_${prefix}(env, state->on_error, 1, &error);`)
   lines.push('        }')
   lines.push('    } else {')

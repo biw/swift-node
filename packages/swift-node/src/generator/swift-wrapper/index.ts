@@ -21,6 +21,53 @@ export function generateWrappersSwift(
     '',
     'import Foundation',
     '',
+    `public indirect enum SwiftNodeJSONValue: Sendable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([SwiftNodeJSONValue])
+    case object([String: SwiftNodeJSONValue])
+}
+
+extension SwiftNodeJSONValue: Encodable {
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null:
+            try container.encodeNil()
+        case let .bool(value):
+            try container.encode(value)
+        case let .number(value):
+            try container.encode(value)
+        case let .string(value):
+            try container.encode(value)
+        case let .array(value):
+            try container.encode(value)
+        case let .object(value):
+            try container.encode(value)
+        }
+    }
+}
+
+public protocol SwiftNodeStructuredError: Error {
+    var code: String { get }
+    var message: String { get }
+    var details: [String: SwiftNodeJSONValue] { get }
+}
+
+public extension SwiftNodeStructuredError {
+    var message: String { localizedDescription }
+    var details: [String: SwiftNodeJSONValue] { [:] }
+}
+
+private struct SwiftNodeErrorEnvelope: Encodable {
+    let message: String
+    let code: String?
+    let details: [String: SwiftNodeJSONValue]?
+}
+`,
+    '',
     `private func swiftNodeCopyUTF8(_ value: String) -> UnsafeMutablePointer<CChar>? {
     let bytes = Array(value.utf8)
     guard let destination = malloc(bytes.count + 1)?.assumingMemoryBound(to: CChar.self) else { return nil }
@@ -29,6 +76,31 @@ export function generateWrappersSwift(
     }
     destination[bytes.count] = 0
     return destination
+}`,
+    '',
+    `private func swiftNodeEncodeError(_ envelope: SwiftNodeErrorEnvelope) -> UnsafeMutablePointer<CChar> {
+    let fallback = #"{"message":"swift-node failed to encode an error"}"#
+    let encoded = (try? JSONEncoder().encode(envelope)).flatMap { String(data: $0, encoding: .utf8) } ?? fallback
+    return swiftNodeCopyUTF8(encoded)!
+}
+
+private func swiftNodeBridgeError(_ error: any Error) -> UnsafeMutablePointer<CChar> {
+    if let structured = error as? any SwiftNodeStructuredError {
+        return swiftNodeEncodeError(
+            SwiftNodeErrorEnvelope(
+                message: structured.message,
+                code: structured.code,
+                details: structured.details
+            )
+        )
+    }
+    return swiftNodeEncodeError(
+        SwiftNodeErrorEnvelope(message: error.localizedDescription, code: nil, details: nil)
+    )
+}
+
+private func swiftNodeBridgeError(_ message: String) -> UnsafeMutablePointer<CChar> {
+    swiftNodeEncodeError(SwiftNodeErrorEnvelope(message: message, code: nil, details: nil))
 }`,
     '',
     `private func swiftNodeDecodeUTF8(_ value: UnsafePointer<CChar>, _ length: Int) -> String {

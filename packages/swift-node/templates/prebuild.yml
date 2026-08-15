@@ -115,12 +115,12 @@ jobs:
             generated_sources: false
           - target: darwin-x64
             label: macOS Intel
-            runner: macos-15-intel
+            runner: macos-26-intel
             prebuild_path: dist_swift-node/your_addon.darwin-x64.node
             generated_sources: false
           - target: darwin-arm64
             label: macOS ARM64
-            runner: macos-15
+            runner: macos-26
             prebuild_path: dist_swift-node/your_addon.darwin-arm64.node
             generated_sources: false
 
@@ -146,7 +146,7 @@ jobs:
         run: npm run build
 
       - name: Upload prebuild
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: swift-node-prebuild-${{ matrix.target }}
           path: ${{ matrix.prebuild_path }}
@@ -157,7 +157,7 @@ jobs:
       # upload them exactly once and use them in the publish job below.
       - name: Upload generated runtime files
         if: matrix.generated_sources
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: swift-node-runtime-files
           path: |
@@ -191,13 +191,13 @@ jobs:
           package-manager-cache: false
 
       - name: Download generated runtime files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: swift-node-runtime-files
           path: dist_swift-node/
 
       - name: Download target-qualified binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: swift-node-prebuild-*
           path: .swift-node-prebuild-artifacts
@@ -243,7 +243,7 @@ jobs:
         run: mkdir -p release && npm pack --pack-destination release
 
       - name: Upload release package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: swift-node-release-package
           path: release/*.tgz

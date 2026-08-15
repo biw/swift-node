@@ -1,6 +1,6 @@
 {
   "name": "swift-node",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "description": "Node-API bridge for Swift. Write Node native addons in Swift without C++ glue.",
   "bin": {

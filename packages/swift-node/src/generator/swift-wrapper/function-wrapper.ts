@@ -41,7 +41,7 @@ function emitSwiftBridgeFailure(
   returnStruct?: SwiftStruct,
 ): void {
   lines.push(
-    `${indent}out_error.pointee = UnsafeMutablePointer(mutating: strdup("swift-node could not encode or decode a bridged value")!)`,
+    `${indent}out_error.pointee = swiftNodeBridgeError("swift-node could not encode or decode a bridged value")`,
   )
   emitSwiftDummyReturn(lines, retCat, transport, indent, returnStruct)
 }
@@ -246,9 +246,7 @@ export function generateSingleWrapper(
     lines.push('    }')
     lines.push('    semaphore.wait()')
     lines.push('    if let asyncError {')
-    lines.push(
-      '        out_error.pointee = UnsafeMutablePointer(mutating: strdup(asyncError.localizedDescription)!)',
-    )
+    lines.push('        out_error.pointee = swiftNodeBridgeError(asyncError)')
     emitSwiftDummyReturn(lines, retCat, returnTransport, '        ', retStruct)
     lines.push('    }')
     if (retCat !== 'void') {
@@ -282,9 +280,7 @@ export function generateSingleWrapper(
       )
     }
     lines.push('    } catch {')
-    lines.push(
-      '        out_error.pointee = UnsafeMutablePointer(mutating: strdup(error.localizedDescription)!)',
-    )
+    lines.push('        out_error.pointee = swiftNodeBridgeError(error)')
     // Return a dummy value on error — the C++ side checks out_error first and throws a JS exception
     if (retCat === 'string' && fn.returnType.endsWith('?')) lines.push('        return nil')
     else if (returnTransport || retCat === 'string')

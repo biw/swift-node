@@ -60,9 +60,8 @@ export function readConfig(projectDir: string): SwiftNodeConfig {
   return {
     moduleName: inferModuleName(projectDir),
     swiftSources: findSwiftSources(projectDir),
-    // AsyncStream and AsyncThrowingStream are part of Swift Node's supported
-    // surface and require macOS 12 at the system ABI boundary.
-    minMacosVersion: '12.0',
+    // Generated native addons support macOS 14 (Sonoma) and newer.
+    minMacosVersion: '14.0',
     // Prebuilds should be usable on machines that do not have Swift installed.
     // Consumers can opt out when their deployment already provides the runtime.
     shipSwiftRuntime: packageJson.swiftNode?.shipSwiftRuntime !== false,

@@ -21,7 +21,7 @@ const config = {
   buildDir: '/project/dist',
   objDir: '/project/build',
   runtimeDir: '/runtime',
-  minMacosVersion: '13.0',
+  minMacosVersion: '14.0',
   shipSwiftRuntime: true,
 }
 
@@ -35,12 +35,12 @@ describe('cross-platform compiler commands', () => {
 
   it('uses the macOS deployment target only on macOS', () => {
     expect(swiftCompileArgs(config, 'darwin', 'arm64')).toContain('-target')
-    expect(swiftCompileArgs(config, 'darwin', 'arm64')).toContain('arm64-apple-macosx13.0')
+    expect(swiftCompileArgs(config, 'darwin', 'arm64')).toContain('arm64-apple-macosx14.0')
     expect(swiftCompileArgs(config, 'linux')).not.toContain('-target')
     expect(swiftCompileArgs(config, 'win32')).not.toContain('-target')
-    expect(cppCompileArgs(config, 'darwin')).toContain('-mmacosx-version-min=13.0')
+    expect(cppCompileArgs(config, 'darwin')).toContain('-mmacosx-version-min=14.0')
     expect(linkCommand(config, ['swift.o', 'addon.o'], 'darwin', 'arm64').args).toContain(
-      'arm64-apple-macosx13.0',
+      'arm64-apple-macosx14.0',
     )
   })
 
