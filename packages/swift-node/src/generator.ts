@@ -1152,17 +1152,7 @@ function generateAsyncWrapper(fn: SwiftFunction): string {
 
   if (hasError) {
     lines.push('    if (ctx->swift_error) {')
-    lines.push('        napi_value message;')
-    lines.push(
-      '        bool message_ok = swift_node_napi_ok(env, swift_node_create_string(env, ctx->swift_error, &message), "Failed to create Swift error message");',
-    )
-    lines.push('        free(const_cast<char*>(ctx->swift_error));')
-    lines.push('        if (message_ok) {')
-    lines.push('            napi_value error;')
-    lines.push(
-      '            if (swift_node_napi_ok(env, napi_create_error(env, nullptr, message, &error), "Failed to create Swift error")) napi_reject_deferred(env, ctx->deferred, error);',
-    )
-    lines.push('        }')
+    lines.push('        swift_node_reject_swift_error(env, ctx->deferred, ctx->swift_error);')
     if (retCat === 'string') lines.push('        free(const_cast<char*>(ctx->result));')
     lines.push(`        napi_delete_async_work(env, ctx->work);`)
     lines.push('        delete ctx;')
@@ -2411,7 +2401,9 @@ private func swiftNodeStreamComplete(
         callback(subscriptionID, nil)
         return
     }
-    error.localizedDescription.withCString { callback(subscriptionID, $0) }
+    let encoded = swiftNodeBridgeError(error)
+    defer { free(encoded) }
+    callback(subscriptionID, UnsafePointer(encoded))
 }`
 }
 
@@ -2708,7 +2700,7 @@ function emitSwiftBridgeFailure(
   returnStruct?: SwiftStruct,
 ): void {
   lines.push(
-    `${indent}out_error.pointee = UnsafeMutablePointer(mutating: strdup("swift-node could not encode or decode a bridged value")!)`,
+    `${indent}out_error.pointee = swiftNodeBridgeError("swift-node could not encode or decode a bridged value")`,
   )
   emitSwiftDummyReturn(lines, retCat, transport, indent, returnStruct)
 }
@@ -2913,9 +2905,7 @@ function generateSingleWrapper(
     lines.push('    }')
     lines.push('    semaphore.wait()')
     lines.push('    if let asyncError {')
-    lines.push(
-      '        out_error.pointee = UnsafeMutablePointer(mutating: strdup(asyncError.localizedDescription)!)',
-    )
+    lines.push('        out_error.pointee = swiftNodeBridgeError(asyncError)')
     emitSwiftDummyReturn(lines, retCat, returnTransport, '        ', retStruct)
     lines.push('    }')
     if (retCat !== 'void') {
@@ -2949,9 +2939,7 @@ function generateSingleWrapper(
       )
     }
     lines.push('    } catch {')
-    lines.push(
-      '        out_error.pointee = UnsafeMutablePointer(mutating: strdup(error.localizedDescription)!)',
-    )
+    lines.push('        out_error.pointee = swiftNodeBridgeError(error)')
     // Return a dummy value on error — the C++ side checks out_error first and throws a JS exception
     if (retCat === 'string' && fn.returnType.endsWith('?')) lines.push('        return nil')
     else if (returnTransport || retCat === 'string')
@@ -3286,6 +3274,53 @@ export function generateWrappersSwift(
     '',
     'import Foundation',
     '',
+    `public indirect enum SwiftNodeJSONValue: Sendable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([SwiftNodeJSONValue])
+    case object([String: SwiftNodeJSONValue])
+}
+
+extension SwiftNodeJSONValue: Encodable {
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null:
+            try container.encodeNil()
+        case let .bool(value):
+            try container.encode(value)
+        case let .number(value):
+            try container.encode(value)
+        case let .string(value):
+            try container.encode(value)
+        case let .array(value):
+            try container.encode(value)
+        case let .object(value):
+            try container.encode(value)
+        }
+    }
+}
+
+public protocol SwiftNodeStructuredError: Error {
+    var code: String { get }
+    var message: String { get }
+    var details: [String: SwiftNodeJSONValue] { get }
+}
+
+public extension SwiftNodeStructuredError {
+    var message: String { localizedDescription }
+    var details: [String: SwiftNodeJSONValue] { [:] }
+}
+
+private struct SwiftNodeErrorEnvelope: Encodable {
+    let message: String
+    let code: String?
+    let details: [String: SwiftNodeJSONValue]?
+}
+`,
+    '',
     `private func swiftNodeCopyUTF8(_ value: String) -> UnsafeMutablePointer<CChar>? {
     let bytes = Array(value.utf8)
     guard let destination = malloc(bytes.count + 1)?.assumingMemoryBound(to: CChar.self) else { return nil }
@@ -3294,6 +3329,31 @@ export function generateWrappersSwift(
     }
     destination[bytes.count] = 0
     return destination
+}`,
+    '',
+    `private func swiftNodeEncodeError(_ envelope: SwiftNodeErrorEnvelope) -> UnsafeMutablePointer<CChar> {
+    let fallback = #"{"message":"swift-node failed to encode an error"}"#
+    let encoded = (try? JSONEncoder().encode(envelope)).flatMap { String(data: $0, encoding: .utf8) } ?? fallback
+    return swiftNodeCopyUTF8(encoded)!
+}
+
+private func swiftNodeBridgeError(_ error: any Error) -> UnsafeMutablePointer<CChar> {
+    if let structured = error as? any SwiftNodeStructuredError {
+        return swiftNodeEncodeError(
+            SwiftNodeErrorEnvelope(
+                message: structured.message,
+                code: structured.code,
+                details: structured.details
+            )
+        )
+    }
+    return swiftNodeEncodeError(
+        SwiftNodeErrorEnvelope(message: error.localizedDescription, code: nil, details: nil)
+    )
+}
+
+private func swiftNodeBridgeError(_ message: String) -> UnsafeMutablePointer<CChar> {
+    swiftNodeEncodeError(SwiftNodeErrorEnvelope(message: message, code: nil, details: nil))
 }`,
     '',
     `private func swiftNodeDecodeUTF8(_ value: UnsafePointer<CChar>, _ length: Int) -> String {
@@ -3469,11 +3529,8 @@ function generateStreamSubscriptionCpp(fn: SwiftFunction, structs: SwiftStruct[]
   }
   lines.push(`        invoke_stream_handler_${prefix}(env, state->on_value, 1, &argument);`)
   lines.push(`    } else if (message->kind == stream_message_error_${prefix}) {`)
-  lines.push('        napi_value text;')
-  lines.push('        napi_value error;')
-  lines.push(
-    '        if (swift_node_napi_ok(env, swift_node_create_string(env, message->error ? message->error : "Stream failed", &text), "Failed to create stream error") && swift_node_napi_ok(env, napi_create_error(env, nullptr, text, &error), "Failed to create stream error")) {',
-  )
+  lines.push('        napi_value error = swift_node_error_from_swift_payload(env, message->error);')
+  lines.push('        if (error) {')
   lines.push(`            invoke_stream_handler_${prefix}(env, state->on_error, 1, &error);`)
   lines.push('        }')
   lines.push('    } else {')
@@ -3816,6 +3873,20 @@ export function generateDts(
 ): string {
   const lines: string[] = ['// Generated by swift-node — do not edit', '']
 
+  lines.push('export type SwiftNodeJSONValue =')
+  lines.push('  | null')
+  lines.push('  | boolean')
+  lines.push('  | number')
+  lines.push('  | string')
+  lines.push('  | readonly SwiftNodeJSONValue[]')
+  lines.push('  | { readonly [key: string]: SwiftNodeJSONValue }')
+  lines.push('')
+  lines.push('export interface SwiftNodeStructuredError extends Error {')
+  lines.push('  readonly code: string')
+  lines.push('  readonly details: { readonly [key: string]: SwiftNodeJSONValue }')
+  lines.push('}')
+  lines.push('')
+
   if (functions.some((fn) => fn.stream)) {
     lines.push('declare global {')
     lines.push('  interface SymbolConstructor {')
@@ -3888,6 +3959,20 @@ export function generateDtsCjs(
   }
 
   lines.push('declare namespace native {')
+
+  lines.push('  type SwiftNodeJSONValue =')
+  lines.push('    | null')
+  lines.push('    | boolean')
+  lines.push('    | number')
+  lines.push('    | string')
+  lines.push('    | readonly SwiftNodeJSONValue[]')
+  lines.push('    | { readonly [key: string]: SwiftNodeJSONValue }')
+  lines.push('')
+  lines.push('  interface SwiftNodeStructuredError extends Error {')
+  lines.push('    readonly code: string')
+  lines.push('    readonly details: { readonly [key: string]: SwiftNodeJSONValue }')
+  lines.push('  }')
+  lines.push('')
 
   if (functions.some((fn) => fn.stream)) {
     lines.push('  interface SwiftNodeSubscription {')

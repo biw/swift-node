@@ -131,6 +131,49 @@ These are the values that an exported function can accept or return. They are no
 | `@escaping (String, Int, Bool, Double) -> Void` | accepts a one-shot JavaScript callback; `String?` is also supported for an optional callback argument                                             |
 | `@escaping (String) async throws -> String`     | retains a JavaScript callback, awaits its returned Promise from any Swift task, and deterministically releases it when Swift releases the closure |
 
+### Structured errors
+
+An ordinary Swift `Error` becomes an ordinary JavaScript `Error` with the same message. When Node needs a stable error code and machine-readable context, conform the Swift error to `SwiftNodeStructuredError`. It adds `code` and JSON-safe `details` properties to the JavaScript `Error`; this works for synchronous exports, async exports, and stream `onError` callbacks.
+
+```swift
+enum CredentialFailure: SwiftNodeStructuredError {
+    case unavailable(account: String)
+
+    var code: String { "credential.unavailable" }
+
+    var message: String {
+        switch self {
+        case let .unavailable(account): "No credential is available for \(account)."
+        }
+    }
+
+    var details: [String: SwiftNodeJSONValue] {
+        switch self {
+        case let .unavailable(account): ["account": .string(account)]
+        }
+    }
+}
+
+// @swift-node:export
+func credential(_ account: String) throws -> String {
+    throw CredentialFailure.unavailable(account: account)
+}
+```
+
+```ts
+import { credential, type SwiftNodeStructuredError } from './dist_swift-node/index.mjs'
+
+try {
+  credential('desktop-token')
+} catch (cause) {
+  const error = cause as SwiftNodeStructuredError
+  console.error(error.code) // credential.unavailable
+  console.error(error.details.account) // desktop-token
+}
+```
+
+`SwiftNodeJSONValue` supports `null`, booleans, numbers, strings, arrays, and nested objects. The generated TypeScript declarations export both `SwiftNodeStructuredError` and `SwiftNodeJSONValue` for consumers that want to type their error handling.
+
 ### Borrowed binary inputs
 
 Use `UnsafeRawBufferPointer` only when a synchronous native operation needs to
