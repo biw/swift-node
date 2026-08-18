@@ -74,9 +74,15 @@ jobs:
           node-version: '24'
           cache: true
 
+      # Match the Swift toolchain selected by `swift-node init`'s generated CI.
       - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
         uses: ./.github/actions/setup-windows-toolchain
+
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
+        if: runner.os != 'Windows'
+        with:
+          swift-version: 6.3.3
 
       - run: node scripts/run-without-node-warnings.mjs vp install
       - run: node scripts/run-without-node-warnings.mjs vp -C packages/swift-node pack
@@ -107,9 +113,15 @@ jobs:
           node-version: '24'
           cache: true
 
+      # Match the Swift toolchain selected by `swift-node init`'s generated CI.
       - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
         uses: ./.github/actions/setup-windows-toolchain
+
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
+        if: runner.os != 'Windows'
+        with:
+          swift-version: 6.3.3
 
       - name: Verify toolchain
         run: |
@@ -159,10 +171,8 @@ jobs:
           node-version: '24'
           cache: true
 
-      # This example imports Foundation and Security. Run it with the same
-      # externally selected toolchain pattern supported by swift-node.
-      - name: Install selected macOS Swift toolchain
-        uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
+      # Match the Swift toolchain selected by `swift-node init`'s generated CI.
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
         with:
           swift-version: 6.3.3
 
@@ -213,9 +223,15 @@ jobs:
           node-version: '24'
           cache: true
 
+      # Match the Swift toolchain selected by `swift-node init`'s generated CI.
       - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
         uses: ./.github/actions/setup-windows-toolchain
+
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
+        if: runner.os != 'Windows'
+        with:
+          swift-version: 6.3.3
 
       - name: Verify toolchain
         run: |
@@ -259,9 +275,15 @@ jobs:
           node-version: '24'
           cache: true
 
+      # Match the Swift toolchain selected by `swift-node init`'s generated CI.
       - name: Prepare Windows native toolchain
         if: runner.os == 'Windows'
         uses: ./.github/actions/setup-windows-toolchain
+
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
+        if: runner.os != 'Windows'
+        with:
+          swift-version: 6.3.3
 
       - name: Verify toolchain
         run: |

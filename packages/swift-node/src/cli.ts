@@ -72,6 +72,7 @@ import { commandInvocationForPlatform } from './command.js'
 import {
   generatePrebuildCiWorkflow,
   generatePrebuildWorkflow,
+  generateWindowsToolchainAction,
   packageFilesForPrebuildTargets,
   nativeTargetId,
   prebuildFilename,
@@ -477,6 +478,23 @@ export default defineConfig({
   }
 
   if (createPrebuildWorkflow) {
+    if (prebuildTargets.some((target) => target.platform === 'win32')) {
+      const windowsToolchainActionPath = path.join(
+        projectDir,
+        '.github',
+        'actions',
+        'setup-windows-toolchain',
+        'action.yml',
+      )
+      if (existsSync(windowsToolchainActionPath)) {
+        console.log(`Kept existing ${windowsToolchainActionPath}`)
+      } else {
+        mkdirSync(path.dirname(windowsToolchainActionPath), { recursive: true })
+        writeFileSync(windowsToolchainActionPath, generateWindowsToolchainAction())
+        console.log(`Created ${windowsToolchainActionPath}`)
+      }
+    }
+
     const ciWorkflowPath = path.join(projectDir, '.github', 'workflows', 'ci.yml')
     if (existsSync(ciWorkflowPath)) {
       console.log(`Kept existing ${ciWorkflowPath}`)

@@ -236,7 +236,7 @@ Prebuilt binaries make installation faster and more reproducible, and avoid requ
 
 By default, Linux packages include the Swift `.so` runtime libraries and Windows packages include the Swift `.dll` runtime libraries beside their target-qualified `.node` binary. This lets consumers load the package without separately installing Swift. Set `"swiftNode": { "shipSwiftRuntime": false }` only when your deployment supplies a compatible Swift runtime. Linux prebuilds use a glibc baseline; Alpine and other musl systems build locally into a distinct `{platform}-{arch}-musl` target directory.
 
-Publish macOS binaries as `dist_swift-node/{moduleName}.darwin-{arch}.node`, or `dist/{moduleName}.darwin-{arch}.node` when using tsdown. Linux and Windows retain `/{platform}-{arch}/` so their Swift runtime sidecars remain beside the addon. The generated manifest and workflow already include the required runtime sidecars. Start with the [prebuild workflow template](./packages/swift-node/templates/prebuild.yml) when adding this to an existing package.
+Publish macOS binaries as `dist_swift-node/{moduleName}.darwin-{arch}.node`, or `dist/{moduleName}.darwin-{arch}.node` when using tsdown. Linux and Windows retain `/{platform}-{arch}/` so their Swift runtime sidecars remain beside the addon. The generated manifest and workflow already include the required runtime sidecars. Start with the [prebuild workflow template](./packages/swift-node/templates/prebuild.yml) when adding this to an existing package; when building Windows targets, also copy its [Windows toolchain action](./packages/swift-node/templates/setup-windows-toolchain.yml) to `.github/actions/setup-windows-toolchain/action.yml`.
 
 ## Requirements
 

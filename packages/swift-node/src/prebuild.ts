@@ -29,6 +29,102 @@ export interface PrebuildWorkflowOptions {
 const swiftToolchainVersion = '6.3.3'
 
 /**
+ * Generate the Windows setup action used by workflows created with
+ * `swift-node init`. Swift's Windows installer is slow, so cache the installed
+ * SDK and reconstruct its environment on a cache hit. node-gyp's downloaded
+ * headers and import library are cached for the same reason.
+ */
+export function generateWindowsToolchainAction(): string {
+  return `name: Set up Windows native toolchain
+description: Restore or install Swift and cache Node development files used by native builds.
+
+outputs:
+  swift-cache-hit:
+    description: Whether the installed Swift SDK was restored from cache.
+    value: \${{ steps.swift-cache.outputs.cache-hit }}
+  node-gyp-cache-hit:
+    description: Whether Node development files were restored from cache.
+    value: \${{ steps.node-gyp-cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # gha-setup-swift's built-in cache stores only installer.exe. Cache the
+    # installed SDK instead: its quiet installer takes about 75 seconds on the
+    # hosted Windows runner, while the restored SDK only needs its environment
+    # variables reconstructed below.
+    - name: Restore installed Swift SDK
+      id: swift-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/AppData/Local/Programs/Swift
+        key: swift-node-swift-windows-\${{ runner.arch }}-6.3.3-RELEASE-v2
+
+    - name: Configure restored Swift SDK
+      if: steps.swift-cache.outputs.cache-hit == 'true'
+      shell: pwsh
+      run: |
+        $swiftRoot = Join-Path $env:LOCALAPPDATA 'Programs\\Swift'
+        $toolchainBin = Join-Path $swiftRoot 'Toolchains\\6.3.3+Asserts\\usr\\bin'
+        $runtimeBin = Join-Path $swiftRoot 'Runtimes\\6.3.3\\usr\\bin'
+        $sdkRoot = Join-Path $swiftRoot 'Platforms\\6.3.3\\Windows.platform\\Developer\\SDKs\\Windows.sdk'
+
+        foreach ($path in @($toolchainBin, $runtimeBin, $sdkRoot)) {
+          if (-not (Test-Path $path)) {
+            throw "The restored Swift SDK is incomplete: $path"
+          }
+        }
+
+        $toolchainBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        $runtimeBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        "SDKROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Install Swift toolchain
+      if: steps.swift-cache.outputs.cache-hit != 'true'
+      uses: compnerd/gha-setup-swift@v0.4.0
+      with:
+        swift-version: swift-6.3.3-release
+        swift-build: 6.3.3-RELEASE
+        build_arch: \${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
+
+    # node-gyp downloads Windows Node headers and node.lib on demand into this
+    # directory. The swift-node CLI needs those files for every C++ build.
+    - name: Read Node version
+      id: node-version
+      shell: pwsh
+      run: |
+        $version = node -p 'process.versions.node'
+        "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+    - name: Restore Node development files
+      id: node-gyp-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.swift-node/node-gyp
+        key: swift-node-node-gyp-windows-\${{ runner.arch }}-\${{ steps.node-version.outputs.version }}-v1
+`
+}
+
+function swiftToolchainWorkflowSteps(targets: readonly PrebuildTarget[]): string[] {
+  const hasWindowsTarget = targets.some((target) => target.platform === 'win32')
+
+  return [
+    ...(hasWindowsTarget
+      ? [
+          '      - name: Prepare Windows native toolchain',
+          "        if: runner.os == 'Windows'",
+          '        uses: ./.github/actions/setup-windows-toolchain',
+          '',
+        ]
+      : []),
+    '      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0',
+    ...(hasWindowsTarget ? ["        if: runner.os != 'Windows'"] : []),
+    '        with:',
+    `          swift-version: ${swiftToolchainVersion}`,
+  ]
+}
+
+/**
  * The native platforms swift-node supports in generated GitHub Actions
  * workflows. IDs intentionally use Node's `process.platform`/`process.arch`
  * spelling because they are also embedded in the prebuilt binary filename.
@@ -224,9 +320,7 @@ export function generatePrebuildCiWorkflow(
     '',
     ...commands.setup,
     ...(commands.setup.length > 0 ? [''] : []),
-    '      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0',
-    '        with:',
-    `          swift-version: ${swiftToolchainVersion}`,
+    ...swiftToolchainWorkflowSteps(targets),
     '',
     '      - name: Install dependencies',
     `        run: ${commands.install}`,
@@ -429,9 +523,7 @@ export function generatePrebuildWorkflow(
     ...commands.setup,
     ...(commands.setup.length > 0 ? [''] : []),
     '      # Keep the prebuild ABI reproducible across every target.',
-    '      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0',
-    '        with:',
-    `          swift-version: ${swiftToolchainVersion}`,
+    ...swiftToolchainWorkflowSteps(targets),
     '',
     '      - name: Install dependencies',
     `        run: ${commands.install}`,
