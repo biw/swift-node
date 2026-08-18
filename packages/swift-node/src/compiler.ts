@@ -275,9 +275,25 @@ export function swiftCompileArgs(
   return args
 }
 
+/**
+ * Invoke the macOS compiler through xcrun so it receives the selected Xcode
+ * SDK. xcrun also honors TOOLCHAINS, which lets callers use a Swift toolchain
+ * installed alongside Xcode without losing access to Apple frameworks.
+ */
+export function swiftcInvocation(
+  args: string[],
+  platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === 'darwin') {
+    return { command: 'xcrun', args: ['--sdk', 'macosx', 'swiftc', ...args] }
+  }
+  return { command: 'swiftc', args }
+}
+
 export function compileSwift(config: CompilerConfig): string {
   const outputFile = path.join(config.objDir, 'swift.o')
-  run('swiftc', swiftCompileArgs(config), config.projectDir)
+  const { command, args } = swiftcInvocation(swiftCompileArgs(config))
+  run(command, args, config.projectDir)
   return outputFile
 }
 

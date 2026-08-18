@@ -10,6 +10,7 @@ import {
   needsNodeGypInstall,
   nodeGypDevDir,
   swiftCompileArgs,
+  swiftcInvocation,
 } from '../src/compiler'
 
 const config = {
@@ -42,6 +43,17 @@ describe('cross-platform compiler commands', () => {
     expect(linkCommand(config, ['swift.o', 'addon.o'], 'darwin', 'arm64').args).toContain(
       'arm64-apple-macosx14.0',
     )
+  })
+
+  it('invokes the macOS Swift compiler through xcrun with the macOS SDK', () => {
+    const swiftArgs = swiftCompileArgs(config, 'darwin', 'arm64')
+
+    expect(swiftcInvocation(swiftArgs, 'darwin')).toEqual({
+      command: 'xcrun',
+      args: ['--sdk', 'macosx', 'swiftc', ...swiftArgs],
+    })
+    expect(swiftcInvocation(swiftArgs, 'linux')).toEqual({ command: 'swiftc', args: swiftArgs })
+    expect(swiftcInvocation(swiftArgs, 'win32')).toEqual({ command: 'swiftc', args: swiftArgs })
   })
 
   it('uses the configured deployment target consistently on Apple Silicon', () => {
