@@ -159,6 +159,13 @@ jobs:
           node-version: '24'
           cache: true
 
+      # This example imports Foundation and Security. Run it with the same
+      # externally selected toolchain pattern supported by swift-node.
+      - name: Install selected macOS Swift toolchain
+        uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
+        with:
+          swift-version: 6.3.3
+
       - name: Verify toolchain
         run: |
           swiftc --version

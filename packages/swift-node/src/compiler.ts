@@ -275,9 +275,30 @@ export function swiftCompileArgs(
   return args
 }
 
+/**
+ * Invoke the macOS compiler through xcrun so it receives an Xcode SDK.
+ * Preserve an explicit SDKROOT; otherwise select the default macOS SDK.
+ * xcrun also honors TOOLCHAINS, which lets callers use a Swift toolchain
+ * installed alongside Xcode without losing access to Apple frameworks.
+ */
+export function swiftcInvocation(
+  args: string[],
+  platform = process.platform,
+  sdkRoot = process.env.SDKROOT,
+): { command: string; args: string[] } {
+  if (platform === 'darwin') {
+    return {
+      command: 'xcrun',
+      args: [...(sdkRoot ? [] : ['--sdk', 'macosx']), 'swiftc', ...args],
+    }
+  }
+  return { command: 'swiftc', args }
+}
+
 export function compileSwift(config: CompilerConfig): string {
   const outputFile = path.join(config.objDir, 'swift.o')
-  run('swiftc', swiftCompileArgs(config), config.projectDir)
+  const { command, args } = swiftcInvocation(swiftCompileArgs(config))
+  run(command, args, config.projectDir)
   return outputFile
 }
 
