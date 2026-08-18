@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import {
   generatePrebuildCiWorkflow,
   generatePrebuildWorkflow,
+  generateWindowsToolchainAction,
   nativeTargetId,
   packageFilesForPrebuildTargets,
   prebuildFilename,
@@ -11,6 +12,22 @@ import {
 } from '../src/prebuild'
 
 describe('prebuild targets', () => {
+  it('keeps Windows setup-action copies in sync with the init generator', () => {
+    const action = readFileSync(
+      new URL('../../../.github/actions/setup-windows-toolchain/action.yml', import.meta.url),
+      'utf-8',
+    ).replace(/\r\n/g, '\n')
+    const template = readFileSync(
+      new URL('../templates/setup-windows-toolchain.yml', import.meta.url),
+      'utf-8',
+    ).replace(/\r\n/g, '\n')
+
+    expect(action).toBe(generateWindowsToolchainAction())
+    expect(template).toBe(generateWindowsToolchainAction())
+    expect(action).toContain('key: swift-node-swift-windows-${{ runner.arch }}-6.3.3-RELEASE-v2')
+    expect(action).toContain("build_arch: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}")
+  })
+
   it('uses Node platform and architecture spellings in the filename', () => {
     expect(prebuildFilename('my_addon', 'darwin', 'arm64')).toBe('my_addon.darwin-arm64.node')
     expect(prebuildFilename('my_addon', 'win32', 'x64')).toBe('my_addon.win32-x64.node')
@@ -222,6 +239,15 @@ describe('generated prebuild CI workflow', () => {
     expect(workflow).toContain('pnpm install --frozen-lockfile')
     expect(workflow).toContain('pnpm run build')
     expect(workflow).not.toContain('swift-node prebuild')
+  })
+
+  it('uses the cached local toolchain action for Windows targets', () => {
+    const workflow = generatePrebuildCiWorkflow(selectPrebuildTargets(['linux-x64', 'win32-x64']))
+
+    expect(workflow).toContain('name: Prepare Windows native toolchain')
+    expect(workflow).toContain("if: runner.os == 'Windows'")
+    expect(workflow).toContain('uses: ./.github/actions/setup-windows-toolchain')
+    expect(workflow).toContain("if: runner.os != 'Windows'")
   })
 
   it('rejects an empty CI matrix', () => {

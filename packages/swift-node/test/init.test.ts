@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vite-plus/test'
 import { cmdInit } from '../src/cli'
 import { commandInvocationForPlatform } from '../src/command'
+import { selectPrebuildTargets } from '../src/prebuild'
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repoDir = path.resolve(packageDir, '..', '..')
@@ -18,6 +19,48 @@ function run(command: string, args: string[], options: Parameters<typeof execFil
 }
 
 describe('tsdown initialization', () => {
+  it('scaffolds the cached Windows toolchain action when Windows prebuilds are selected', async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), 'swift-node-windows-ci-init-'))
+    const projectDir = path.join(tempDir, 'windows-ci-app')
+
+    try {
+      await cmdInit(['windows-ci-app'], {
+        cwd: tempDir,
+        interactive: false,
+        packageManager: { name: 'npm', version: '11.0.0', source: 'installed' },
+        prebuildTargets: selectPrebuildTargets(['linux-x64', 'win32-x64']),
+        createPrebuildWorkflow: true,
+        publishPrebuildPackage: false,
+        shipSwiftRuntime: true,
+      })
+
+      const windowsAction = readFileSync(
+        path.join(projectDir, '.github', 'actions', 'setup-windows-toolchain', 'action.yml'),
+        'utf8',
+      )
+      const ciWorkflow = readFileSync(
+        path.join(projectDir, '.github', 'workflows', 'ci.yml'),
+        'utf8',
+      )
+      const publishWorkflow = readFileSync(
+        path.join(projectDir, '.github', 'workflows', 'publish.yml'),
+        'utf8',
+      )
+
+      expect(windowsAction).toContain(
+        'key: swift-node-swift-windows-${{ runner.arch }}-6.3.3-RELEASE-v2',
+      )
+      expect(windowsAction).toContain('path: ~/.swift-node/node-gyp')
+      expect(windowsAction).toContain(
+        "build_arch: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}",
+      )
+      expect(ciWorkflow).toContain('uses: ./.github/actions/setup-windows-toolchain')
+      expect(publishWorkflow).toContain('uses: ./.github/actions/setup-windows-toolchain')
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('uses the existing project manager for its generated .gitignore', async () => {
     const projectDir = mkdtempSync(path.join(tmpdir(), 'swift-node-existing-yarn-'))
 

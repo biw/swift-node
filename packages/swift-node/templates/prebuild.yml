@@ -135,7 +135,12 @@ jobs:
           node-version: 24
 
       # Keep the prebuild ABI reproducible across every target.
+      - name: Prepare Windows native toolchain
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-toolchain
+
       - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9 # v1.14.0
+        if: runner.os != 'Windows'
         with:
           swift-version: 6.3.3
 
