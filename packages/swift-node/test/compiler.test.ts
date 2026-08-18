@@ -45,12 +45,16 @@ describe('cross-platform compiler commands', () => {
     )
   })
 
-  it('invokes the macOS Swift compiler through xcrun with the macOS SDK', () => {
+  it('uses xcrun for macOS Swift while preserving an explicit SDK selection', () => {
     const swiftArgs = swiftCompileArgs(config, 'darwin', 'arm64')
 
-    expect(swiftcInvocation(swiftArgs, 'darwin')).toEqual({
+    expect(swiftcInvocation(swiftArgs, 'darwin', '')).toEqual({
       command: 'xcrun',
       args: ['--sdk', 'macosx', 'swiftc', ...swiftArgs],
+    })
+    expect(swiftcInvocation(swiftArgs, 'darwin', '/custom/MacOSX.sdk')).toEqual({
+      command: 'xcrun',
+      args: ['swiftc', ...swiftArgs],
     })
     expect(swiftcInvocation(swiftArgs, 'linux')).toEqual({ command: 'swiftc', args: swiftArgs })
     expect(swiftcInvocation(swiftArgs, 'win32')).toEqual({ command: 'swiftc', args: swiftArgs })
