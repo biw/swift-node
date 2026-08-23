@@ -678,17 +678,19 @@ function nodeImportLibraryIdentity(): string {
   return importLibrary ? fileIdentity(importLibrary) : 'unavailable'
 }
 
-function currentCompileTarget(): NativeBuildCacheConfiguration['compileTarget'] {
+function currentCompileTarget(
+  config: ReturnType<typeof readConfig>,
+): NativeBuildCacheConfiguration['compileTarget'] {
   return {
     developerDir: selectedDeveloperDirectory(),
     nodeHeaders: nodeHeadersIdentity(),
     nodeImportLibrary: nodeImportLibraryIdentity(),
     sdkRoot: process.env.SDKROOT ?? '',
     toolchains: process.env.TOOLCHAINS ?? '',
-    swiftFlags: process.env.SWIFTFLAGS ?? '',
+    swiftFlags: [process.env.SWIFTFLAGS ?? '', ...config.swiftCompilerFlags].join('\0'),
     cFlags: process.env.CFLAGS ?? '',
     cxxFlags: process.env.CXXFLAGS ?? '',
-    ldFlags: process.env.LDFLAGS ?? '',
+    ldFlags: [process.env.LDFLAGS ?? '', ...config.linkerFlags].join('\0'),
   }
 }
 
@@ -702,11 +704,13 @@ function generatorRuntimeIdentity(): NativeBuildCacheConfiguration['generatorRun
 function nativeBuildConfiguration(
   config: ReturnType<typeof readConfig>,
   toolchain: NativeBuildCacheConfiguration['toolchain'],
-  compileTarget = currentCompileTarget(),
+  compileTarget = currentCompileTarget(config),
 ): NativeBuildCacheConfiguration {
   return {
     moduleName: config.moduleName,
     shipSwiftRuntime: config.shipSwiftRuntime,
+    swiftCompilerFlags: config.swiftCompilerFlags,
+    linkerFlags: config.linkerFlags,
     swiftNodeVersion: packageVersion(),
     platform: process.platform,
     arch: process.arch,
@@ -728,7 +732,9 @@ function buildConfigurationFor(
   return nativeBuildConfiguration(
     config,
     (dependencies.toolchainIdentity ?? (() => currentToolchainIdentity()))(cwd),
-    (dependencies.compileTargetIdentity ?? (() => currentCompileTarget()))(cwd),
+    dependencies.compileTargetIdentity
+      ? dependencies.compileTargetIdentity(cwd)
+      : currentCompileTarget(config),
   )
 }
 
@@ -1173,6 +1179,8 @@ export function cmdBuild(cwd = process.cwd(), dependencies: BuildDependencies = 
         runtimeDir,
         minMacosVersion: config.minMacosVersion,
         shipSwiftRuntime: config.shipSwiftRuntime,
+        swiftCompilerFlags: config.swiftCompilerFlags,
+        linkerFlags: config.linkerFlags,
       }
 
       console.log('  Compiling Swift...')

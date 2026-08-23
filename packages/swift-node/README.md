@@ -292,7 +292,22 @@ The stream bridge supports scalar, `String`, and JSON-safe collection or explici
 
 ## Generated project files
 
-This describes a project created by `swift-node init`, not this repository. You edit `src/native.swift`; `src/index.ts` re-exports the generated runtime. `swift-node build` writes JavaScript, declarations, and the native binary to `dist_swift-node/`. When you opt into tsdown, it bundles the JavaScript into `dist/` and `swift-node-unplugin` emits the native binary and any Swift runtime sidecars there. Both generated directories are gitignored.
+This describes a project created by `swift-node init`. You edit `src/native.swift`; `src/index.ts` re-exports the generated runtime. `swift-node build` writes JavaScript, declarations, and the native binary to `dist_swift-node/`. When you opt into tsdown, it bundles the JavaScript into `dist/` and `swift-node-unplugin` emits the native binary and any Swift runtime sidecars there. Both generated directories are gitignored.
+
+## Compiler and linker flags
+
+Use `swiftNode.swiftCompilerFlags` and `swiftNode.linkerFlags` in `package.json` when a native build needs additional Swift compiler or linker arguments. Each array item is one command-line argument and is passed through unchanged.
+
+```json
+{
+  "swiftNode": {
+    "swiftCompilerFlags": ["-D", "FEATURE_ENABLED"],
+    "linkerFlags": ["-L", "./native-libraries", "-lExample"]
+  }
+}
+```
+
+Flag arrays must contain non-empty strings without NUL bytes. Changing either array invalidates the native build cache so the binary is rebuilt with the new arguments.
 
 ## Set up CI and publishing (optional)
 

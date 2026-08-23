@@ -17,6 +17,8 @@ const manifestSchemaVersion = 1
 export interface NativeBuildCacheConfiguration {
   moduleName: string
   shipSwiftRuntime: boolean
+  swiftCompilerFlags: string[]
+  linkerFlags: string[]
   swiftNodeVersion: string
   platform: NodeJS.Platform
   arch: string
@@ -105,12 +107,23 @@ function isCompileTarget(value: unknown): value is NativeBuildCacheConfiguration
   )
 }
 
+function isCompilerArgumentArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (argument) => typeof argument === 'string' && argument.length > 0 && !argument.includes('\0'),
+    )
+  )
+}
+
 function isConfiguration(value: unknown): value is NativeBuildCacheConfiguration {
   if (typeof value !== 'object' || value === null) return false
   const config = value as Partial<NativeBuildCacheConfiguration>
   return (
     typeof config.moduleName === 'string' &&
     typeof config.shipSwiftRuntime === 'boolean' &&
+    isCompilerArgumentArray(config.swiftCompilerFlags) &&
+    isCompilerArgumentArray(config.linkerFlags) &&
     typeof config.swiftNodeVersion === 'string' &&
     typeof config.platform === 'string' &&
     typeof config.arch === 'string' &&

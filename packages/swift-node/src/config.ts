@@ -13,6 +13,8 @@ export interface SwiftNodeConfig {
   swiftSources: string[]
   minMacosVersion: string
   shipSwiftRuntime: boolean
+  swiftCompilerFlags: string[]
+  linkerFlags: string[]
 }
 
 function inferModuleName(projectDir: string): string {
@@ -53,9 +55,29 @@ function findSwiftSources(projectDir: string): string[] {
   return files
 }
 
+function compilerArgumentArray(value: unknown, property: string): string[] {
+  if (value === undefined) return []
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (argument) =>
+        typeof argument !== 'string' || argument.length === 0 || argument.includes('\0'),
+    )
+  ) {
+    throw new Error(
+      `package.json ${property} must be an array of non-empty strings without NUL bytes.`,
+    )
+  }
+  return [...value]
+}
+
 export function readConfig(projectDir: string): SwiftNodeConfig {
   const packageJson = JSON.parse(readFileSync(path.join(projectDir, 'package.json'), 'utf-8')) as {
-    swiftNode?: { shipSwiftRuntime?: unknown }
+    swiftNode?: {
+      shipSwiftRuntime?: unknown
+      swiftCompilerFlags?: unknown
+      linkerFlags?: unknown
+    }
   }
   return {
     moduleName: inferModuleName(projectDir),
@@ -65,5 +87,10 @@ export function readConfig(projectDir: string): SwiftNodeConfig {
     // Prebuilds should be usable on machines that do not have Swift installed.
     // Consumers can opt out when their deployment already provides the runtime.
     shipSwiftRuntime: packageJson.swiftNode?.shipSwiftRuntime !== false,
+    swiftCompilerFlags: compilerArgumentArray(
+      packageJson.swiftNode?.swiftCompilerFlags,
+      'swiftNode.swiftCompilerFlags',
+    ),
+    linkerFlags: compilerArgumentArray(packageJson.swiftNode?.linkerFlags, 'swiftNode.linkerFlags'),
   }
 }

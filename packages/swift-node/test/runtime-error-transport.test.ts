@@ -181,6 +181,8 @@ describe('structured error runtime transport', () => {
       runtimeDir,
       minMacosVersion: '12.0',
       shipSwiftRuntime: false,
+      swiftCompilerFlags: [],
+      linkerFlags: [],
     }
 
     mkdirSync(fixtureDirectory, { recursive: true })

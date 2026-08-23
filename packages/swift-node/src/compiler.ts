@@ -23,6 +23,10 @@ export interface CompilerConfig {
   minMacosVersion: string
   /** Copy the Swift dynamic runtime beside Linux and Windows binaries. */
   shipSwiftRuntime: boolean
+  /** Additional arguments passed directly to the Swift compiler. */
+  swiftCompilerFlags: string[]
+  /** Additional arguments passed directly to the platform linker. */
+  linkerFlags: string[]
 }
 
 export type SupportedPlatform = 'darwin' | 'linux' | 'win32'
@@ -266,6 +270,7 @@ export function swiftCompileArgs(
       ? ['-target', `${arch === 'x64' ? 'x86_64' : arch}-apple-macosx${macosTarget}`]
       : []),
     ...(platform === 'linux' ? ['-Xcc', '-fPIC'] : []),
+    ...config.swiftCompilerFlags,
     ...importHeader,
     ...sources,
     '-o',
@@ -362,6 +367,7 @@ export function linkCommand(
         '-o',
         outputFile,
         ...objectFiles,
+        ...config.linkerFlags,
       ],
     }
   }
@@ -381,6 +387,7 @@ export function linkCommand(
         '-o',
         outputFile,
         ...objectFiles,
+        ...config.linkerFlags,
       ],
     }
   }
@@ -395,7 +402,14 @@ export function linkCommand(
     getNodeImportLibrary({ platform }) ?? nodeImportLibraryCandidates({ platform })[0]
   return {
     command: 'swiftc',
-    args: ['-emit-library', '-o', outputFile, ...objectFiles, nodeImportLibrary!],
+    args: [
+      '-emit-library',
+      '-o',
+      outputFile,
+      ...objectFiles,
+      ...config.linkerFlags,
+      nodeImportLibrary!,
+    ],
   }
 }
 
