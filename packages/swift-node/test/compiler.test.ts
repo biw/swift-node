@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vite-plus/test'
 import {
   copySwiftRuntimeLibraries,
@@ -24,6 +25,8 @@ const config = {
   runtimeDir: '/runtime',
   minMacosVersion: '14.0',
   shipSwiftRuntime: true,
+  swiftCompilerFlags: [],
+  linkerFlags: [],
 }
 
 describe('cross-platform compiler commands', () => {
@@ -66,6 +69,27 @@ describe('cross-platform compiler commands', () => {
     expect(swiftCompileArgs({ ...config, minMacosVersion: '10.15' }, 'darwin', 'arm64')).toContain(
       'arm64-apple-macosx10.15',
     )
+  })
+
+  it('passes configured flags to Swift compilation and linking', () => {
+    const configured = {
+      ...config,
+      swiftCompilerFlags: ['-D', 'FEATURE_ENABLED'],
+      linkerFlags: ['-L', './native-libraries', '-lExample'],
+    }
+    const swiftArgs = swiftCompileArgs(configured, 'darwin', 'arm64')
+
+    expect(swiftArgs).toContain('-D')
+    expect(swiftArgs).toContain('FEATURE_ENABLED')
+    expect(swiftArgs.indexOf('FEATURE_ENABLED')).toBeLessThan(
+      swiftArgs.indexOf(path.resolve(configured.projectDir, configured.swiftSources[0])),
+    )
+
+    for (const platform of ['darwin', 'linux', 'win32'] as const) {
+      const args = linkCommand(configured, ['swift.o', 'addon.o'], platform).args
+      expect(args).toEqual(expect.arrayContaining(configured.linkerFlags))
+      expect(args.indexOf('-lExample')).toBeGreaterThan(args.indexOf('addon.o'))
+    }
   })
 
   it('uses platform-compatible C++ object settings', () => {

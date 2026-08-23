@@ -26,6 +26,8 @@ describe('project configuration', () => {
         moduleName: 'my_addon',
         minMacosVersion: '14.0',
         shipSwiftRuntime: true,
+        swiftCompilerFlags: [],
+        linkerFlags: [],
       })
     })
   })
@@ -33,6 +35,36 @@ describe('project configuration', () => {
   it('allows deployments with their own Swift runtime to opt out', () => {
     withProject({ name: 'my-addon', swiftNode: { shipSwiftRuntime: false } }, (projectDir) => {
       expect(readConfig(projectDir).shipSwiftRuntime).toBe(false)
+    })
+  })
+
+  it('passes configured compiler and linker flags through unchanged', () => {
+    withProject(
+      {
+        name: 'my-addon',
+        swiftNode: {
+          swiftCompilerFlags: ['-D', 'FEATURE_ENABLED'],
+          linkerFlags: ['-L', './native-libraries', '-lExample'],
+        },
+      },
+      (projectDir) => {
+        expect(readConfig(projectDir)).toMatchObject({
+          swiftCompilerFlags: ['-D', 'FEATURE_ENABLED'],
+          linkerFlags: ['-L', './native-libraries', '-lExample'],
+        })
+      },
+    )
+  })
+
+  it.each([
+    ['swiftNode.swiftCompilerFlags', { swiftCompilerFlags: ['-D', 1] }],
+    ['swiftNode.linkerFlags', { linkerFlags: [''] }],
+    ['swiftNode.linkerFlags', { linkerFlags: ['before\0after'] }],
+  ])('rejects invalid %s values', (property, swiftNode) => {
+    withProject({ name: 'my-addon', swiftNode }, (projectDir) => {
+      expect(() => readConfig(projectDir)).toThrow(
+        `package.json ${property} must be an array of non-empty strings without NUL bytes.`,
+      )
     })
   })
 })

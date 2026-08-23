@@ -184,7 +184,29 @@ describe('native build manifest', () => {
 
       cmdBuild(projectDir, fakeBuildDependencies(calls, 'target-b', 'compile-target-b'))
 
-      expect(calls).toEqual({ swift: 6, cpp: 6, link: 6 })
+      writeFileSync(
+        path.join(projectDir, 'package.json'),
+        JSON.stringify({
+          name: 'renamed-addon',
+          swiftNode: { shipSwiftRuntime: false, swiftCompilerFlags: ['-D', 'FEATURE_ENABLED'] },
+        }),
+      )
+      cmdBuild(projectDir, fakeBuildDependencies(calls, 'target-b', 'compile-target-b'))
+
+      writeFileSync(
+        path.join(projectDir, 'package.json'),
+        JSON.stringify({
+          name: 'renamed-addon',
+          swiftNode: {
+            shipSwiftRuntime: false,
+            swiftCompilerFlags: ['-D', 'FEATURE_ENABLED'],
+            linkerFlags: ['-L', './native-libraries', '-lExample'],
+          },
+        }),
+      )
+      cmdBuild(projectDir, fakeBuildDependencies(calls, 'target-b', 'compile-target-b'))
+
+      expect(calls).toEqual({ swift: 8, cpp: 8, link: 8 })
     })
   })
 
