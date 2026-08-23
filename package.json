@@ -11,6 +11,7 @@
     "run:example:secure-storage-consumer-esm": "pnpm --dir examples/secure-storage-consumer-esm start",
     "build:example:timer-callback": "pnpm --dir examples/timer-callback build",
     "build:examples": "pnpm build:example:hello-world && pnpm build:example:hello-world-tsdown && pnpm build:example:secure-storage && pnpm build:example:timer-callback",
+    "prepare": "pnpx skills experimental_install",
     "precommit": "pnpm build:core && pnpm --dir examples/timer-callback build && pnpm --dir examples/timer-callback test",
     "test": "node scripts/run-without-node-warnings.mjs vp test run"
   },
