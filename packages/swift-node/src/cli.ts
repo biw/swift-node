@@ -738,8 +738,129 @@ function buildConfigurationFor(
   )
 }
 
-function inputHashes(cwd: string, sources: readonly string[]): Record<string, string> {
-  return Object.fromEntries(sources.map((source) => [source, fileHash(path.resolve(cwd, source))]))
+function forwardedLinkerArguments(linkerFlags: readonly string[]): string[] {
+  const arguments_: string[] = []
+  for (let index = 0; index < linkerFlags.length; index += 1) {
+    const argument = linkerFlags[index]
+    if (argument === '-Xlinker') {
+      const forwarded = linkerFlags[index + 1]
+      if (forwarded !== undefined) {
+        arguments_.push(forwarded)
+        index += 1
+      }
+      continue
+    }
+    if (argument.startsWith('-Wl,')) {
+      arguments_.push(...argument.slice('-Wl,'.length).split(','))
+      continue
+    }
+    arguments_.push(argument)
+  }
+  return arguments_
+}
+
+function isLibraryFile(pathname: string): boolean {
+  return /\.(?:a|dylib|lib|tbd)$/i.test(pathname) || /\.so(?:\..+)?$/i.test(pathname)
+}
+
+function linkedLibraryHashes(cwd: string, linkerFlags: readonly string[]): Record<string, string> {
+  const libraryDirectories = new Set<string>()
+  const frameworkDirectories = new Set<string>()
+  const libraryNames = new Set<string>()
+  const frameworkNames = new Set<string>()
+  const libraryFiles = new Set<string>()
+  const arguments_ = forwardedLinkerArguments(linkerFlags)
+
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index]
+    const next = arguments_[index + 1]
+    if ((argument === '-L' || argument === '-F') && next !== undefined) {
+      const directories = argument === '-L' ? libraryDirectories : frameworkDirectories
+      directories.add(next)
+      index += 1
+      continue
+    }
+    if (argument.startsWith('-L') && argument.length > 2) {
+      libraryDirectories.add(argument.slice(2))
+      continue
+    }
+    if (argument.startsWith('-F') && argument.length > 2) {
+      frameworkDirectories.add(argument.slice(2))
+      continue
+    }
+    if (/^\/LIBPATH:/i.test(argument)) {
+      libraryDirectories.add(argument.slice('/LIBPATH:'.length))
+      continue
+    }
+    if (argument === '-l' && next !== undefined) {
+      libraryNames.add(next)
+      index += 1
+      continue
+    }
+    if (argument.startsWith('-l') && argument.length > 2) {
+      libraryNames.add(argument.slice(2))
+      continue
+    }
+    if (argument === '-framework' && next !== undefined) {
+      frameworkNames.add(next)
+      index += 1
+      continue
+    }
+    if (argument === '-force_load' || argument === '-needed_library') {
+      if (next !== undefined) {
+        libraryFiles.add(next)
+        index += 1
+      }
+      continue
+    }
+    if (isLibraryFile(argument)) libraryFiles.add(argument)
+  }
+
+  const libraries = new Set<string>([...libraryFiles].map((library) => path.resolve(cwd, library)))
+  const libraryExtensions =
+    process.platform === 'win32'
+      ? ['.lib', '.a']
+      : process.platform === 'darwin'
+        ? ['.tbd', '.dylib', '.a']
+        : ['.so', '.a']
+  for (const directory of libraryDirectories) {
+    for (const name of libraryNames) {
+      const filenames = name.startsWith(':')
+        ? [name.slice(1)]
+        : libraryExtensions.map((extension) => `lib${name}${extension}`)
+      for (const filename of filenames) {
+        libraries.add(path.resolve(cwd, directory, filename))
+      }
+    }
+  }
+  for (const directory of frameworkDirectories) {
+    for (const name of frameworkNames) {
+      libraries.add(path.resolve(cwd, directory, `${name}.framework`, name))
+    }
+  }
+
+  const hashes: Record<string, string> = {}
+  for (const library of libraries) {
+    try {
+      hashes[`linker library:${library}`] = fileHash(library)
+    } catch {
+      // A missing candidate cannot have been linked. Omitting it also makes a
+      // later addition invalidate the cache by changing the set of inputs.
+    }
+  }
+  return hashes
+}
+
+function inputHashes(
+  cwd: string,
+  config: Pick<ReturnType<typeof readConfig>, 'swiftSources' | 'linkerFlags'>,
+): Record<string, string> {
+  return {
+    ...Object.fromEntries(
+      config.swiftSources.map((source) => [source, fileHash(path.resolve(cwd, source))]),
+    ),
+    ...linkedLibraryHashes(cwd, config.linkerFlags),
+  }
 }
 
 function sameInputHashes(left: Record<string, string>, right: Record<string, string>): boolean {
@@ -947,7 +1068,7 @@ export function cmdBuild(cwd = process.cwd(), dependencies: BuildDependencies = 
       path.relative(generatedDir, path.join(nativeOutputDir, binaryName)),
     ]
     let inputs: Record<string, string>
-    inputs = inputHashes(cwd, config.swiftSources)
+    inputs = inputHashes(cwd, config)
     let buildConfiguration: NativeBuildCacheConfiguration | undefined
 
     // On a first build, generating the ESM/CJS runtime must happen immediately:
@@ -962,7 +1083,7 @@ export function cmdBuild(cwd = process.cwd(), dependencies: BuildDependencies = 
         // package.json) while validation is in progress; cache hits must not
         // claim a binary is current for that newer project state.
         const recheckedConfig = readConfig(cwd)
-        const recheckedInputs = inputHashes(cwd, recheckedConfig.swiftSources)
+        const recheckedInputs = inputHashes(cwd, recheckedConfig)
         const recheckedBinaryName = prebuildFilename(recheckedConfig.moduleName)
         const recheckedOutputs = [
           ...generatedRuntimeFiles,
@@ -1196,7 +1317,7 @@ export function cmdBuild(cwd = process.cwd(), dependencies: BuildDependencies = 
       // first C++ build on Windows. Re-identify after linking so the first
       // manifest describes the toolchain that actually produced the binary.
       const completedBuildConfiguration = buildConfigurationFor(config, cwd, dependencies)
-      const completedInputs = inputHashes(cwd, config.swiftSources)
+      const completedInputs = inputHashes(cwd, config)
       if (sameInputHashes(inputs, completedInputs)) {
         writeNativeBuildManifest(generatedDir, completedInputs, completedBuildConfiguration, [
           ...expectedOutputs,
