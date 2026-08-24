@@ -210,6 +210,42 @@ describe('native build manifest', () => {
     })
   })
 
+  it('rebuilds when a library referenced by linker flags changes', () => {
+    withProject((projectDir) => {
+      const libraryDirectory = path.join(projectDir, 'native-libraries')
+      const library = path.join(libraryDirectory, 'libExample.a')
+      mkdirSync(libraryDirectory)
+      writeFileSync(library, 'library version 1')
+      writeFileSync(
+        path.join(projectDir, 'package.json'),
+        JSON.stringify({
+          name: 'my-addon',
+          swiftNode: {
+            linkerFlags: ['-L', './native-libraries', '-lExample'],
+          },
+        }),
+      )
+
+      const calls = { swift: 0, cpp: 0, link: 0 }
+      const dependencies = fakeBuildDependencies(calls)
+      const fakeLink = dependencies.link!
+      dependencies.link = (config, objectFiles) => {
+        const output = fakeLink(config, objectFiles)
+        writeFileSync(output, readFileSync(library))
+        return output
+      }
+
+      cmdBuild(projectDir, dependencies)
+      expect(readFileSync(buildOutput(projectDir), 'utf8')).toBe('library version 1')
+
+      writeFileSync(library, 'library version 2')
+      cmdBuild(projectDir, dependencies)
+
+      expect(calls).toEqual({ swift: 2, cpp: 2, link: 2 })
+      expect(readFileSync(buildOutput(projectDir), 'utf8')).toBe('library version 2')
+    })
+  })
+
   it('rebuilds when a generated runtime file is deleted or its native binary is altered', () => {
     withProject((projectDir) => {
       const calls = { swift: 0, cpp: 0, link: 0 }

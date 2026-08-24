@@ -307,7 +307,7 @@ Use `swiftNode.swiftCompilerFlags` and `swiftNode.linkerFlags` in `package.json`
 }
 ```
 
-Flag arrays must contain non-empty strings without NUL bytes. Changing either array invalidates the native build cache so the binary is rebuilt with the new arguments.
+Flag arrays must contain non-empty strings without NUL bytes. Changing either array invalidates the native build cache so the binary is rebuilt with the new arguments. The cache also hashes local libraries resolved through linker flags (such as `-L` and `-l`), so updating a linked library rebuilds the addon.
 
 ## Set up CI and publishing (optional)
 
